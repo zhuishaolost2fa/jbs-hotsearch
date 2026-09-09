@@ -108,15 +108,26 @@ class MiquanGroupSource(Source):
 
         total_groups = len(seen_group) or len(groups)
 
+        # 频次门槛：低于 threshold 场的拼场视为噪声，不参与
+        #（避免 1~2 场的偶发约本干扰榜单）。
+        eligible = {k: gs for k, gs in by_key.items() if len(gs) >= self.threshold}
+        if not eligible:
+            raise RuntimeError("拼场频次全部低于门槛，无有效热度信号")
+
+        # 相对归一化：当天最热剧本的拼场频次 = 1.0，其余按占比线性拉开。
+        # 拼场是「实时局部」信号，用「占当天最大频次的比例」比固定低阈值更有区分度——
+        # 否则头部 10~33 场的剧本 value 会全部封顶 1.0，丧失排序意义。
+        max_count = max(len(gs) for gs in eligible.values())
+
         candidates: list[ScriptCandidate] = []
-        for key, gs in by_key.items():
+        for key, gs in eligible.items():
             count = len(gs)
             # 展示字段取信息最全的那条（有标签优先）
             best = max(gs, key=lambda g: (bool(g.get("scriptTag")), len(g.get("joinUserList") or [])))
             tags = [t.strip() for t in (best.get("scriptTag") or "").split("@") if t.strip()]
             # 拼场里剧本名常带书名号（《红豆》），strip 掉外层装饰，保留冒号等（1:100…）
             title = (best.get("scriptName") or "").strip().strip("《》〈〉")
-            value = min(1.0, count / self.threshold)
+            value = count / max_count
             candidates.append(
                 ScriptCandidate(
                     title=title,
@@ -129,6 +140,7 @@ class MiquanGroupSource(Source):
                     value=value,
                     signals={
                         "group_count": count,
+                        "max_count": max_count,
                         "total_groups": total_groups,
                         "threshold": self.threshold,
                         "script_id": str(best.get("scriptId") or ""),

@@ -46,7 +46,9 @@ class ParsedFilter:
         }
         base = cfg.supabase_url.rstrip("/")
         try:
-            with httpx.Client(timeout=cfg.http_timeout) as client:
+            # retries=3：本机到 Supabase 偶发 SSL 握手超时，连接层自动重试 3 次。
+            transport = httpx.HTTPTransport(retries=3)
+            with httpx.Client(timeout=cfg.http_timeout, transport=transport) as client:
                 # 1) 已解析的 script_code 集合（is_active 且 有 chunk）
                 docs = client.get(
                     f"{base}/rest/v1/script_dm_documents",

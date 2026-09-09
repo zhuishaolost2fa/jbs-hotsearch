@@ -1,7 +1,9 @@
-# 本地运行产物（抓包文件除外，它是必需的输入）
+# 本地运行产物
 data/snapshots/
 data/reports/
 data/*.db
+# 抓包文件含 usertoken / sign（凭证），不进公开仓库；部署时用 scp 单独传
+data/*.txt
 .env
 .workbuddy/
 __pycache__/

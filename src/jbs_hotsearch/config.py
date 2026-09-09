@@ -80,8 +80,8 @@ class Config:
     # ---- 数据源：米圈拼场（组局频次 = 实时约本热度）----
     group_enabled: bool = False
     group_curls_file: str = "./data/miquan_puzzle_curls.txt"
-    group_weight: float = 1.2
-    group_threshold: float = 5.0
+    group_weight: float = 0.8
+    group_threshold: float = 3.0
 
     # ---- 数据源：搜索 + LLM ----
     search_provider: str = "none"
