@@ -5,15 +5,18 @@ from __future__ import annotations
 from ..config import Config
 from .base import Source
 from .miquan import MiquanSource
+from .puzzle import MiquanGroupSource
 from .search_llm import SearchLLMSource
 
-__all__ = ["Source", "MiquanSource", "SearchLLMSource", "enabled_sources"]
+__all__ = ["Source", "MiquanSource", "MiquanGroupSource", "SearchLLMSource", "enabled_sources"]
 
 
 def enabled_sources(cfg: Config) -> list[Source]:
     sources: list[Source] = []
     if cfg.miquan_enabled:
         sources.append(MiquanSource(cfg))
+    if cfg.group_enabled:
+        sources.append(MiquanGroupSource(cfg))
     if cfg.search_provider not in ("", "none"):
         sources.append(SearchLLMSource(cfg))
     return sources
