@@ -127,8 +127,8 @@ class Config:
             miquan_weight=_get_float("HS_SOURCE_MIQUAN_WEIGHT", 1.0),
             group_enabled=_get_bool("HS_SOURCE_MIQUAN_GROUP_ENABLED", False),
             group_curls_file=_get("HS_SOURCE_MIQUAN_GROUP_CURLS_FILE", "./data/miquan_puzzle_curls.txt"),
-            group_weight=_get_float("HS_SOURCE_MIQUAN_GROUP_WEIGHT", 1.2),
-            group_threshold=_get_float("HS_SOURCE_MIQUAN_GROUP_THRESHOLD", 5.0),
+            group_weight=_get_float("HS_SOURCE_MIQUAN_GROUP_WEIGHT", 0.8),
+            group_threshold=_get_float("HS_SOURCE_MIQUAN_GROUP_THRESHOLD", 3.0),
             search_provider=_get("HS_SEARCH_PROVIDER", "none").lower(),
             search_api_key=_get("HS_SEARCH_API_KEY"),
             search_queries=[
