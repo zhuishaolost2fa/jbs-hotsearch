@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 from .config import Config
+from .filter_parsed import ParsedFilter
 from .models import DailyBoard, RankedScript, SourceResult
 from .rank import rank_fuse
 from .report import render_markdown, write_report
@@ -74,11 +75,29 @@ def build_board(cfg: Config, results: list[SourceResult], board_date: date, elap
         logger.warning("读取上一期排名失败，本期全部按新上榜处理：%s", exc)
         prev_ranks = {}
 
-    items = rank_fuse(candidates, cfg, today=board_date, prev_ranks=prev_ranks)
+    # 先按 top_n × buffer 抓更多候选，过滤「已解析」后再截到 top_n，保证有足够补位。
+    buffer = max(1, cfg.filter_buffer_multiplier) if cfg.filter_parsed_enabled else 1
+    ranked = rank_fuse(
+        candidates, cfg, today=board_date, prev_ranks=prev_ranks, limit=cfg.top_n * buffer
+    )
+
+    parsed_filter = ParsedFilter.load(cfg)
+    kept, filtered = parsed_filter.apply(ranked)
+    items = kept[: cfg.top_n]
+
+    # 过滤后重排 rank（prev_rank / is_new 已在 rank_fuse 里算好，保持不动）
+    for idx, item in enumerate(items, start=1):
+        item.rank = idx
+
     for item in items:
         item.reason = _reason(item)
     return DailyBoard(
-        board_date=board_date, items=items, source_results=results, elapsed_ms=elapsed_ms
+        board_date=board_date,
+        items=items,
+        source_results=results,
+        elapsed_ms=elapsed_ms,
+        filtered_items=filtered,
+        filter_note=parsed_filter.error or "",
     )
 
 

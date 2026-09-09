@@ -58,6 +58,18 @@ def render_markdown(board: DailyBoard) -> str:
         lines.append(f"- **{item.title}**：{item.reason or '—'}（来源：{'、'.join(item.sources)}）")
     lines.append("")
 
+    if board.filtered_items:
+        lines.append("## 已解析 · 未入榜")
+        lines.append("")
+        lines.append("以下剧本热度足够进榜，但 DM 手册已在库（`script_dm_documents` 已解析），本轮剔除：")
+        lines.append("")
+        for item in board.filtered_items:
+            lines.append(f"- ~~{item.title}~~（原热度 {item.hot_score:.1f}）")
+        lines.append("")
+    elif board.filter_note:
+        lines.append("> ⚠️ 已解析过滤未生效：" + board.filter_note)
+        lines.append("")
+
     lines.append("## 数据源明细")
     lines.append("")
     lines.append("| 源 | 状态 | 条目 | 耗时 |")

@@ -12,6 +12,10 @@ from __future__ import annotations
 import re
 import unicodedata
 
+# 日文假名「の/ノ」在中文剧本名里几乎都等于「的」，
+# 例如米圈写《六角馆の谋杀鉴赏》、剧本库写《六角馆的谋杀鉴赏》，必须视为同一本。
+_KANA_NO = str.maketrans("のノ", "的的")
+
 # 括号：中文/英文
 _BRACKET_RE = re.compile(r"[（(\[【][^）)\]】]*[）)\]】]")
 # 书名号等装饰标点
@@ -34,6 +38,7 @@ def normalize_title(title: str) -> str:
     if not title:
         return ""
     text = unicodedata.normalize("NFKC", title).strip()
+    text = text.translate(_KANA_NO)
     text = _BRACKET_RE.sub("", text)
     text = _DECOR_RE.sub("", text)
     text = _strip_noise(text)

@@ -90,6 +90,10 @@ class Config:
     cross_source_boost: float = 0.15
     recency_boost: float = 0.10
 
+    # ---- 已解析过滤 ----
+    filter_parsed_enabled: bool = True
+    filter_buffer_multiplier: int = 3
+
     @property
     def http_timeout(self) -> float:
         return 30.0
@@ -128,6 +132,8 @@ class Config:
             search_weight=_get_float("HS_SOURCE_SEARCH_WEIGHT", 0.8),
             cross_source_boost=_get_float("HS_CROSS_SOURCE_BOOST", 0.15),
             recency_boost=_get_float("HS_RECENCY_BOOST", 0.10),
+            filter_parsed_enabled=_get_bool("HS_FILTER_PARSED_ENABLED", True),
+            filter_buffer_multiplier=_get_int("HS_FILTER_BUFFER_MULTIPLIER", 3),
         )
         # 相对路径按「运行时当前目录」解析，而不是包安装位置：
         # 非 editable 安装时包躺在 site-packages 里，那里既不该写数据也通常不可写。

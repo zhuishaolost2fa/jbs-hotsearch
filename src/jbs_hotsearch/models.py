@@ -122,6 +122,9 @@ class DailyBoard:
     items: list[RankedScript]
     source_results: list[SourceResult] = field(default_factory=list)
     elapsed_ms: int = 0
+    # 因「已解析」被过滤掉的剧本（不进榜，但报告里要透明展示）
+    filtered_items: list[RankedScript] = field(default_factory=list)
+    filter_note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -130,4 +133,6 @@ class DailyBoard:
             "elapsed_ms": self.elapsed_ms,
             "sources": [r.to_dict() for r in self.source_results],
             "items": [i.to_dict() for i in self.items],
+            "filtered_items": [i.to_dict() for i in self.filtered_items],
+            "filter_note": self.filter_note,
         }

@@ -76,10 +76,16 @@ def rank_fuse(
     cfg: Config,
     today: date | None = None,
     prev_ranks: dict[str, int] | None = None,
+    limit: int | None = None,
 ) -> list[RankedScript]:
-    """按 title_key 聚合 -> 打分 -> 排序 -> 取 Top N -> 补(prev_rank / is_new)。"""
+    """按 title_key 聚合 -> 打分 -> 排序 -> 取 Top N -> 补(prev_rank / is_new)。
+
+    limit 默认取 cfg.top_n；过滤已解析时传更大的值（top_n × buffer），
+    保证剔除几本之后仍有足够候选补位。
+    """
     today = today or date.today()
     prev_ranks = prev_ranks or {}
+    limit = limit or cfg.top_n
 
     groups: dict[str, list[ScriptCandidate]] = defaultdict(list)
     for c in candidates:
@@ -91,10 +97,10 @@ def rank_fuse(
     ranked = [_merge_group(k, v, cfg, today) for k, v in groups.items()]
     ranked.sort(key=lambda r: (-r.hot_score, -(r.rating or 0.0), r.title))
 
-    for idx, item in enumerate(ranked[: cfg.top_n], start=1):
+    for idx, item in enumerate(ranked[:limit], start=1):
         item.rank = idx
         prev = prev_ranks.get(item.title_key)
         item.prev_rank = prev
         item.is_new = prev is None
 
-    return ranked[: cfg.top_n]
+    return ranked[:limit]
