@@ -17,6 +17,23 @@ from .models import DailyBoard
 _BOARD_TITLE = "杭州剧本杀热度榜"
 _BOARD_SUBTITLE = "米圈杭州拼场 · 近 N 天真实组局"
 
+# 导流悬浮窗：指向同源复盘应用（同一台 nginx 的 / 路径）
+_CTA_TITLE = "剧本杀复盘助手"
+_CTA_SUBTITLE = "AI 问答 + 复盘攻略"
+_CTA_HREF = "/"
+
+# 悬浮窗关闭状态记忆（普通字符串，避免 f-string 花括号转义）
+_FLOAT_DISMISS_JS = """<script>
+try{if(localStorage.getItem('hotsearch_float_dismiss'))document.documentElement.className+=' float-off';}catch(e){}
+</script>"""
+
+_FLOAT_CLOSE_JS = """<script>
+(function(){
+  var b=document.getElementById('floatClose'), w=document.getElementById('floatWrap');
+  if(b&&w){b.addEventListener('click',function(){w.remove();try{localStorage.setItem('hotsearch_float_dismiss','1');}catch(e){}});}
+})();
+</script>"""
+
 
 def _escape(value) -> str:
     if value is None:
@@ -127,6 +144,24 @@ def _sources_section(board: dict) -> str:
     )
 
 
+def _float_cta() -> str:
+    """右下角导流悬浮窗：点击整卡跳转到同源复盘应用（新标签页）。"""
+    return f"""
+  <div class="float-wrap" id="floatWrap">
+    <a class="float-cta" href="{_CTA_HREF}" target="_blank" rel="noopener">
+      <svg class="float-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path fill="currentColor" d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
+      </svg>
+      <span class="float-txt">
+        <span class="float-title">{_escape(_CTA_TITLE)}</span>
+        <span class="float-sub">{_escape(_CTA_SUBTITLE)}</span>
+      </span>
+      <span class="float-btn">立即复盘</span>
+    </a>
+    <button class="float-close" id="floatClose" aria-label="关闭导流窗">×</button>
+  </div>"""
+
+
 def _html_shell(board_date: str, generated_at: str, body: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -233,7 +268,38 @@ body {{
 .sources th {{ color: var(--muted); font-weight: 500; }}
 
 .footer {{ text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; line-height: 1.8; }}
+
+/* ---- 导流悬浮窗 ---- */
+.float-off .float-wrap {{ display: none; }}
+.float-wrap {{ position: fixed; right: 14px; bottom: 14px; z-index: 99; }}
+.float-cta {{
+  display: flex; align-items: center; gap: 10px;
+  background: linear-gradient(135deg, #3a2015 0%, #6b2c1c 55%, #c8502a 100%);
+  color: #fff; text-decoration: none;
+  padding: 12px 14px; border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(60, 30, 15, .30);
+  max-width: calc(100vw - 56px);
+}}
+.float-cta:active {{ transform: scale(.97); }}
+.float-ico {{ flex: 0 0 auto; color: #ffd9a8; }}
+.float-txt {{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }}
+.float-title {{ font-size: 14px; font-weight: 700; letter-spacing: .5px; }}
+.float-sub {{ font-size: 11px; opacity: .85; }}
+.float-btn {{
+  flex: 0 0 auto; margin-left: 2px;
+  background: rgba(255,255,255,.20); color: #fff;
+  padding: 5px 11px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  white-space: nowrap;
+}}
+.float-close {{
+  position: absolute; top: -9px; right: -9px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #211d18; color: #fff; border: 2px solid #fff;
+  font-size: 13px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}}
 </style>
+{_FLOAT_DISMISS_JS}
 </head>
 <body>
 <div class="wrap">
@@ -249,6 +315,9 @@ body {{
     数据仅供娱乐参考，不代表任何平台官方排名。
   </div>
 </div>
+
+{_float_cta()}
+{_FLOAT_CLOSE_JS}
 </body>
 </html>"""
 
