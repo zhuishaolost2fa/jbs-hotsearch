@@ -11,7 +11,9 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai \
     HS_DATA_DIR=/app/data \
-    HS_SOURCE_MIQUAN_CURLS_FILE=/app/data/miquan_curls.txt
+    HS_SOURCE_MIQUAN_CURLS_FILE=/app/data/miquan_curls.txt \
+    PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple \
+    PIP_TRUSTED_HOST=mirrors.cloud.tencent.com
 
 LABEL org.opencontainers.image.title="jbs-hotsearch" \
       org.opencontainers.image.description="剧本杀每日热门榜 Top10（内置每日调度）" \
