@@ -8,8 +8,9 @@
 **sign 规则（与 scriptSearchPage 一致）**：sign 覆盖请求体全部字段，改 pageNum 就
 400003；但不绑时间（一次抓包长期复用）。所以每页都要单独抓，一行一条 curl。
 
-**热度口径**：按 title_key 聚合拼场频次 group_count，value = min(1, count / 阈值)。
-默认阈值 5 场 = 满热度（一个剧本当天能凑出 5 场拼场已经算很热）。
+**热度口径**：按 title_key 聚合拼场频次 group_count，value = count / max_count。
+这里 count 是**去重后的频次 = 有多少家不同的店在开这个本**（见 `_collect` 去重说明），
+而不是原始场次——否则同一店家对同一剧本连开十几场会把热度刷爆。
 """
 from __future__ import annotations
 
@@ -91,32 +92,51 @@ class MiquanGroupSource(Source):
         if not groups:
             raise RuntimeError(f"全部 {len(reqs)} 页拼场请求失败，前 3 条原因：{errors[:3]}")
 
-        # 按剧本聚合拼场频次；同一场拼场可能出现在多页（翻页去重靠 groupId）
-        seen_group: set[str] = set()
+        # ---- 去重口径 ----
+        # 同店同本去重：同一店家对同一剧本开多场（常见刷量手法），只算 1 家店。
+        # 去重键 = (shopId, scriptId)；字段缺失时退化为 groupId（保守，不去重）。
+        # 这同时覆盖了翻页去重——跨页重复的同一条拼场，其 shopId/scriptId 必然相同。
+        seen: set[tuple] = set()
         by_key: dict[str, list[dict]] = {}
+        seen_group: set[str] = set()
+        raw_count: Counter = Counter()  # 原始场次（去 groupId 重复、含同店同本重复），仅供报告透明展示
+
         for g in groups:
-            gid = str(g.get("groupId") or "")
-            if gid and gid in seen_group:
-                continue
-            if gid:
-                seen_group.add(gid)
             name = (g.get("scriptName") or "").strip()
             key = title_key(name)
+            gid = str(g.get("groupId") or "")
+
+            # 原始场次：跨页重复的同一场（同 groupId）只算一次
+            if gid:
+                if gid not in seen_group:
+                    seen_group.add(gid)
+                    if key:
+                        raw_count[key] += 1
+            elif key:
+                raw_count[key] += 1
+
+            sid = str(g.get("shopId") or "")
+            pid = str(g.get("scriptId") or "")
+            dedup = ("shop_script", sid, pid) if (sid and pid) else ("group", gid or key)
+            if dedup in seen:
+                continue
+            seen.add(dedup)
             if not key:
                 continue
             by_key.setdefault(key, []).append(g)
 
-        total_groups = len(seen_group) or len(groups)
+        total_groups = len(seen_group) or len(groups)  # 当天总场次（唯一 groupId）
+        total_shops = len(seen)  # 唯一 (店,本) 组合数 = 去重后有效样本
 
-        # 频次门槛：低于 threshold 场的拼场视为噪声，不参与
-        #（避免 1~2 场的偶发约本干扰榜单）。
+        # 频次门槛：去重后 count = 唯一店家数。低于 threshold 家店视为噪声不参与
+        #（避免只有 1 家店在排的冷门本干扰榜单）。
         eligible = {k: gs for k, gs in by_key.items() if len(gs) >= self.threshold}
         if not eligible:
             raise RuntimeError("拼场频次全部低于门槛，无有效热度信号")
 
-        # 相对归一化：当天最热剧本的拼场频次 = 1.0，其余按占比线性拉开。
-        # 拼场是「实时局部」信号，用「占当天最大频次的比例」比固定低阈值更有区分度——
-        # 否则头部 10~33 场的剧本 value 会全部封顶 1.0，丧失排序意义。
+        # 相对归一化：当天最热剧本（最多店家开）的频次 = 1.0，其余按占比线性拉开。
+        # 拼场是「实时局部」信号，用「占当天最大店数的比例」比固定低阈值更有区分度——
+        # 否则头部剧本 value 会全部封顶 1.0，丧失排序意义。
         max_count = max(len(gs) for gs in eligible.values())
 
         candidates: list[ScriptCandidate] = []
@@ -140,8 +160,10 @@ class MiquanGroupSource(Source):
                     value=value,
                     signals={
                         "group_count": count,
+                        "raw_group_count": raw_count.get(key, count),
                         "max_count": max_count,
                         "total_groups": total_groups,
+                        "total_shops": total_shops,
                         "threshold": self.threshold,
                         "script_id": str(best.get("scriptId") or ""),
                         "shop": best.get("shopName"),

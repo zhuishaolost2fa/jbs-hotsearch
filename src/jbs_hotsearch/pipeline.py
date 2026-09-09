@@ -40,9 +40,13 @@ def _reason(item: RankedScript) -> str:
             parts.append("米圈 " + "·".join(bits))
     grp = item.source_detail.get("miquan_group")
     if grp:
-        count = grp.get("group_count")
-        if count:
-            parts.append(f"今日 {count} 场拼场")
+        shops = grp.get("group_count")  # 去重后 = 唯一店家数
+        raw = grp.get("raw_group_count")
+        if shops:
+            if raw and raw > shops:
+                parts.append(f"今日 {shops} 家店开 {raw} 场拼场")
+            else:
+                parts.append(f"今日 {shops} 家店开拼场")
     web = item.source_detail.get("search_llm")
     if web:
         count = web.get("evidence_count")

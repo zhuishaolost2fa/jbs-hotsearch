@@ -77,11 +77,12 @@ class Config:
     miquan_curls_file: str = "./data/miquan_curls.txt"
     miquan_weight: float = 1.0
 
-    # ---- 数据源：米圈拼场（组局频次 = 实时约本热度）----
+    # ---- 数据源：米圈拼场（去重后 = 有多少家店在开这个本）----
     group_enabled: bool = False
     group_curls_file: str = "./data/miquan_puzzle_curls.txt"
     group_weight: float = 0.8
-    group_threshold: float = 3.0
+    # 去重后 count = 唯一店家数，此阈值 = 至少几家店在开才算有效信号
+    group_threshold: float = 2.0
 
     # ---- 数据源：搜索 + LLM ----
     search_provider: str = "none"
@@ -128,7 +129,7 @@ class Config:
             group_enabled=_get_bool("HS_SOURCE_MIQUAN_GROUP_ENABLED", False),
             group_curls_file=_get("HS_SOURCE_MIQUAN_GROUP_CURLS_FILE", "./data/miquan_puzzle_curls.txt"),
             group_weight=_get_float("HS_SOURCE_MIQUAN_GROUP_WEIGHT", 0.8),
-            group_threshold=_get_float("HS_SOURCE_MIQUAN_GROUP_THRESHOLD", 3.0),
+            group_threshold=_get_float("HS_SOURCE_MIQUAN_GROUP_THRESHOLD", 2.0),
             search_provider=_get("HS_SEARCH_PROVIDER", "none").lower(),
             search_api_key=_get("HS_SEARCH_API_KEY"),
             search_queries=[
