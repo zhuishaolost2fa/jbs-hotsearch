@@ -111,6 +111,12 @@ class Config:
     filter_parsed_enabled: bool = True
     filter_buffer_multiplier: int = 3
 
+    # ---- 小红书素材（海报截图 + LLM 文案）----
+    social_enabled: bool = True
+    social_poster_width: int = 1080
+    social_poster_height: int = 1440
+    social_poster_scale: int = 2
+
     @property
     def http_timeout(self) -> float:
         return 30.0
@@ -158,6 +164,10 @@ class Config:
             recency_boost=_get_float("HS_RECENCY_BOOST", 0.10),
             filter_parsed_enabled=_get_bool("HS_FILTER_PARSED_ENABLED", True),
             filter_buffer_multiplier=_get_int("HS_FILTER_BUFFER_MULTIPLIER", 3),
+            social_enabled=_get_bool("HS_SOCIAL_ENABLED", True),
+            social_poster_width=_get_int("HS_SOCIAL_POSTER_WIDTH", 1080),
+            social_poster_height=_get_int("HS_SOCIAL_POSTER_HEIGHT", 1440),
+            social_poster_scale=_get_int("HS_SOCIAL_POSTER_SCALE", 2),
         )
         # 剧本榜降为元数据：热度完全由拼场决定，剧本榜只提供展示字段。
         # 通过把 miquan 源权重置 0 实现（rank.py 里 weight=0 的源不参与打分）。

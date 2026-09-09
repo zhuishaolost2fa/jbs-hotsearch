@@ -12,6 +12,8 @@ dependencies = [
     # 时区数据库：Windows 和精简版 Linux 镜像都没有系统 tz database，
     # 缺了它 zoneinfo 取 Asia/Shanghai 会直接抛 ZoneInfoNotFoundError
     "tzdata>=2024.1",
+    # 无头浏览器截图（小红书素材海报 PNG）
+    "playwright>=1.40.0",
 ]
 
 [project.scripts]

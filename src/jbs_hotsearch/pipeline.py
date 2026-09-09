@@ -19,6 +19,7 @@ from .models import DailyBoard, RankedScript, SourceResult
 from .rank import rank_fuse
 from .report import render_markdown, write_report
 from .site import write_site
+from .social import write_social
 from .sources import enabled_sources
 from .store import board_status, resolve_store_pair
 
@@ -135,6 +136,14 @@ def run_once(cfg: Config, board_date: date | None = None) -> DailyBoard:
     write_report(cfg, board)
     # 榜单展示页（nginx 静态托管 data/site/index.html）
     write_site(cfg, board)
+    # 小红书素材（海报截图 + 文案 + 素材页）；失败不拖垮出榜
+    if cfg.social_enabled:
+        try:
+            result = write_social(cfg, board)
+            png = result.get("png") or ("截图失败：" + str(result.get("png_error", "")))
+            logger.info("小红书素材已生成：png=%s 文案来源=%s", png, result.get("caption_source"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("小红书素材生成失败：%s", exc)
     # 运行日志必须写进真正落地的那个存储，否则「今天到底有没有成功」查不到
     active.save_run(board, board_status(board, error, active.name), error)
     logger.info("完成，用时 %dms", board.elapsed_ms)

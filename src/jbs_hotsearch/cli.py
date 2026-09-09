@@ -6,6 +6,7 @@
     python -m jbs_hotsearch serve     # 常驻，每天 HS_RUN_AT 触发
     python -m jbs_hotsearch doctor    # 环境与权限自检
     python -m jbs_hotsearch board     # 看最近一期本地快照
+    python -m jbs_hotsearch social    # 出榜并生成小红书素材（截图 + 文案）
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ def _task(cfg: Config, board_date: date) -> object:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jbs-hotsearch", description="剧本杀每日热门榜 Top10")
-    parser.add_argument("command", choices=["once", "serve", "preview", "doctor", "board"])
+    parser.add_argument("command", choices=["once", "serve", "preview", "doctor", "board", "social"])
     parser.add_argument("--date", help="指定榜单日期 YYYY-MM-DD（默认今天）")
     args = parser.parse_args(argv)
 
@@ -66,12 +67,19 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
 
-    if args.command == "once":
+    if args.command in ("once", "social"):
         try:
             board = run_once(cfg, board_date)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger("cli").error("出榜失败：%s", exc)
             return 1
+        if args.command == "social":
+            d = board.board_date.isoformat()
+            social_dir = cfg.data_dir / "social"
+            print(f"小红书素材已生成（{d}）：")
+            for name in (f"{d}.png", f"{d}.txt", "index.html"):
+                p = social_dir / name
+                print(f"  {'OK' if p.exists() else '缺失'}  {p}")
         return 0 if board.items else 2
 
     if args.command == "preview":
