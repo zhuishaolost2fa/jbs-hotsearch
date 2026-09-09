@@ -18,6 +18,7 @@ from .filter_parsed import ParsedFilter
 from .models import DailyBoard, RankedScript, SourceResult
 from .rank import rank_fuse
 from .report import render_markdown, write_report
+from .site import write_site
 from .sources import enabled_sources
 from .store import board_status, resolve_store_pair
 
@@ -27,26 +28,23 @@ logger = logging.getLogger(__name__)
 def _reason(item: RankedScript) -> str:
     """把来源信号翻译成一句话上榜理由（尽量用真实字段，不发挥）。"""
     parts: list[str] = []
-    mq = item.source_detail.get("miquan")
-    if mq:
-        heat = mq.get("heat")
-        score = mq.get("score")
-        bits = []
-        if heat:
-            bits.append(f"平台热度 {int(heat)}")
-        if score:
-            bits.append(f"评分 {score}")
-        if bits:
-            parts.append("米圈 " + "·".join(bits))
     grp = item.source_detail.get("miquan_group")
     if grp:
-        shops = grp.get("group_count")  # 去重后 = 唯一店家数
-        raw = grp.get("raw_group_count")
+        shops = grp.get("shop_count")  # 唯一店数
+        groups = grp.get("group_count")  # 组局数（店+本+时刻去重）
+        days = grp.get("window_days")
+        span = f"近 {int(days)} 天" if days else "近期"
         if shops:
-            if raw and raw > shops:
-                parts.append(f"今日 {shops} 家店开 {raw} 场拼场")
+            if groups and groups > shops:
+                parts.append(f"{span} {shops} 家店开 {groups} 场组局")
             else:
-                parts.append(f"今日 {shops} 家店开拼场")
+                parts.append(f"{span} {shops} 家店开组局")
+    mq = item.source_detail.get("miquan")
+    if mq:
+        # 剧本榜降为元数据后，评分仅作质量参考，不再把「平台热度」当作上榜理由
+        score = mq.get("score")
+        if score:
+            parts.append(f"评分 {score}")
     web = item.source_detail.get("search_llm")
     if web:
         count = web.get("evidence_count")
@@ -55,8 +53,10 @@ def _reason(item: RankedScript) -> str:
             parts.append(f"检索 {count} 处提及" + (f"（{why}）" if why else ""))
         elif why:
             parts.append(why)
-    if len(item.sources) > 1:
-        parts.append(f"{len(item.sources)} 个来源交叉验证")
+    # 交叉验证只对「多个热度源」有意义；剧本榜降元数据后 weight=0，不算热度源
+    heat_sources = [s for s, d in item.source_detail.items() if d.get("weight", 0) > 0]
+    if len(heat_sources) > 1:
+        parts.append(f"{len(heat_sources)} 个热度源交叉验证")
     return "；".join(parts) if parts else "综合热度领先"
 
 
@@ -133,6 +133,8 @@ def run_once(cfg: Config, board_date: date | None = None) -> DailyBoard:
         active = fallback
 
     write_report(cfg, board)
+    # 榜单展示页（nginx 静态托管 data/site/index.html）
+    write_site(cfg, board)
     # 运行日志必须写进真正落地的那个存储，否则「今天到底有没有成功」查不到
     active.save_run(board, board_status(board, error, active.name), error)
     logger.info("完成，用时 %dms", board.elapsed_ms)

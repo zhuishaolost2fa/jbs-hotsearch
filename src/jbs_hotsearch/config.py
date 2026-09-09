@@ -76,6 +76,9 @@ class Config:
     miquan_enabled: bool = True
     miquan_curls_file: str = "./data/miquan_curls.txt"
     miquan_weight: float = 1.0
+    # true = 剧本榜只作元数据（评分/标签/封面/人数），热度完全由拼场决定；
+    # false = 剧本榜的「平台热度」也参与打分（历史累计人气计入榜单）。
+    miquan_as_metadata: bool = True
 
     # ---- 数据源：米圈拼场（去重后 = 有多少家店在开这个本）----
     group_enabled: bool = False
@@ -83,6 +86,13 @@ class Config:
     group_weight: float = 0.8
     # 去重后 count = 唯一店家数，此阈值 = 至少几家店在开才算有效信号
     group_threshold: float = 2.0
+    # 拼场时间窗：只统计「今天起 N 天内」开场的排期（含今天），忽略更远的未来排期。
+    # 拼场接口返回未来约一个月的排期（groupOpenTime 今天→+24 天），
+    # 若全量累加，刷量店能靠「连排一个月」把热度虚高。N=3 = 今天+明+后天。
+    group_time_window_days: int = 3
+    # 单店组局封顶：同一家店对同一剧本在时间窗内最多计 N 场组局，超过部分视为刷量
+    # 不再计入（防「单店连排多场」虚高，如刷量店对同一本连排十几场）。0 = 不封顶。
+    group_per_shop_cap: int = 2
 
     # ---- 数据源：搜索 + LLM ----
     search_provider: str = "none"
@@ -126,10 +136,13 @@ class Config:
             miquan_enabled=_get_bool("HS_SOURCE_MIQUAN_ENABLED", True),
             miquan_curls_file=_get("HS_SOURCE_MIQUAN_CURLS_FILE", "./data/miquan_curls.txt"),
             miquan_weight=_get_float("HS_SOURCE_MIQUAN_WEIGHT", 1.0),
+            miquan_as_metadata=_get_bool("HS_SOURCE_MIQUAN_AS_METADATA", True),
             group_enabled=_get_bool("HS_SOURCE_MIQUAN_GROUP_ENABLED", False),
             group_curls_file=_get("HS_SOURCE_MIQUAN_GROUP_CURLS_FILE", "./data/miquan_puzzle_curls.txt"),
             group_weight=_get_float("HS_SOURCE_MIQUAN_GROUP_WEIGHT", 0.8),
             group_threshold=_get_float("HS_SOURCE_MIQUAN_GROUP_THRESHOLD", 2.0),
+            group_time_window_days=_get_int("HS_SOURCE_MIQUAN_GROUP_TIME_WINDOW_DAYS", 3),
+            group_per_shop_cap=_get_int("HS_SOURCE_MIQUAN_GROUP_PER_SHOP_CAP", 2),
             search_provider=_get("HS_SEARCH_PROVIDER", "none").lower(),
             search_api_key=_get("HS_SEARCH_API_KEY"),
             search_queries=[
@@ -146,6 +159,11 @@ class Config:
             filter_parsed_enabled=_get_bool("HS_FILTER_PARSED_ENABLED", True),
             filter_buffer_multiplier=_get_int("HS_FILTER_BUFFER_MULTIPLIER", 3),
         )
+        # 剧本榜降为元数据：热度完全由拼场决定，剧本榜只提供展示字段。
+        # 通过把 miquan 源权重置 0 实现（rank.py 里 weight=0 的源不参与打分）。
+        if cfg.miquan_as_metadata:
+            cfg.miquan_weight = 0.0
+
         # 相对路径按「运行时当前目录」解析，而不是包安装位置：
         # 非 editable 安装时包躺在 site-packages 里，那里既不该写数据也通常不可写。
         if cfg.data_dir and not cfg.data_dir.is_absolute():

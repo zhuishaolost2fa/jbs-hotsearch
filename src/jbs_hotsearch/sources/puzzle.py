@@ -16,12 +16,14 @@ from __future__ import annotations
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
 
 from ..models import ScriptCandidate
 from ..normalize import title_key
+from ..tz_util import get_tz
 from .base import Source
 from .miquan import parse_curl
 
@@ -49,6 +51,18 @@ class MiquanGroupSource(Source):
         if not self.curls_file.is_absolute():
             self.curls_file = Path.cwd() / self.curls_file
         self.threshold = max(1.0, cfg.group_threshold)
+        self.time_window_days = max(1, int(cfg.group_time_window_days))
+        self.per_shop_cap = max(0, int(cfg.group_per_shop_cap))
+
+    def _window_bounds(self):
+        """返回 (今天, 截止日期)，只统计 [今天, 截止日期] 内开场的排期。
+
+        截止 = 今天 + (time_window_days - 1) 天，即「含今天共 N 天」。
+        用配置时区取「今天」，避免 UTC 偏移把当天场次划到昨天/明天。
+        """
+        tz = get_tz(self.cfg.timezone, self.cfg.tz_fallback_offset)
+        today = datetime.now(tz).date()
+        return today, today + timedelta(days=self.time_window_days - 1)
 
     def _requests(self):
         if not self.curls_file.is_file():
@@ -92,10 +106,38 @@ class MiquanGroupSource(Source):
         if not groups:
             raise RuntimeError(f"全部 {len(reqs)} 页拼场请求失败，前 3 条原因：{errors[:3]}")
 
+        # ---- 时间窗过滤 ----
+        # 拼场接口返回的是未来约一个月的排期（groupOpenTime 今天 → +24 天）。
+        # 全量累加会让「单店连排一个月」的刷量本虚高登顶，所以只统计「今天起 N 天内」
+        # 开场的场次（含今天）。无开本时间的场次不纳入时间窗统计（数据异常，保守丢弃）。
+        today, cutoff = self._window_bounds()
+        tz = get_tz(self.cfg.timezone, self.cfg.tz_fallback_offset)
+        _kept: list[dict] = []
+        dropped_out = 0
+        dropped_no_time = 0
+        for g in groups:
+            ms = g.get("groupOpenTime")
+            if not ms:
+                dropped_no_time += 1
+                continue
+            try:
+                d = datetime.fromtimestamp(int(ms) / 1000, tz).date()
+            except (TypeError, ValueError, OSError):
+                dropped_no_time += 1
+                continue
+            if today <= d <= cutoff:
+                _kept.append(g)
+            else:
+                dropped_out += 1
+        groups = _kept
+        if not groups:
+            raise RuntimeError(f"时间窗 {today} ~ {cutoff} 内没有拼场排期（窗口外 {dropped_out} 场）")
+
         # ---- 去重口径 ----
-        # 同店同本去重：同一店家对同一剧本开多场（常见刷量手法），只算 1 家店。
-        # 去重键 = (shopId, scriptId)；字段缺失时退化为 groupId（保守，不去重）。
-        # 这同时覆盖了翻页去重——跨页重复的同一条拼场，其 shopId/scriptId 必然相同。
+        # 按「店 + 本 + 开场时间」去重：同一家店在同一时刻对同一剧本的重复发布
+        #（如同时挂两个车位）合并成 1 个组局；不同时刻的开场各算一个组局。
+        # 热度 = 真实组局数，而不是「店数」——店数会把「同一店连开多场」的真实
+        # 热度抹平。跨页重复的同一场（同 groupId）也天然被这个键覆盖。
         seen: set[tuple] = set()
         by_key: dict[str, list[dict]] = {}
         seen_group: set[str] = set()
@@ -117,7 +159,13 @@ class MiquanGroupSource(Source):
 
             sid = str(g.get("shopId") or "")
             pid = str(g.get("scriptId") or "")
-            dedup = ("shop_script", sid, pid) if (sid and pid) else ("group", gid or key)
+            ot = str(g.get("groupOpenTime") or "")
+            if sid and pid and ot:
+                dedup = ("shop_script_time", sid, pid, ot)
+            elif sid and pid:
+                dedup = ("shop_script", sid, pid)
+            else:
+                dedup = ("group", gid or key)
             if dedup in seen:
                 continue
             seen.add(dedup)
@@ -125,23 +173,40 @@ class MiquanGroupSource(Source):
                 continue
             by_key.setdefault(key, []).append(g)
 
-        total_groups = len(seen_group) or len(groups)  # 当天总场次（唯一 groupId）
-        total_shops = len(seen)  # 唯一 (店,本) 组合数 = 去重后有效样本
+        total_groups = len(seen_group) or len(groups)  # 时间窗内总场次（唯一 groupId）
+        total_instances = len(seen)  # 去重后的组局数（店 + 本 + 时刻）
 
-        # 频次门槛：去重后 count = 唯一店家数。低于 threshold 家店视为噪声不参与
-        #（避免只有 1 家店在排的冷门本干扰榜单）。
+        # ---- 单店组局封顶 ----
+        # 同一家店对同一剧本在时间窗内连排多场（刷量手法），最多只计 cap 场组局，
+        # 超过部分不再计入。时间窗已把「连排一个月」压到「近 N 天」，封顶再压掉
+        # 「单店近 N 天连排 3+ 场」的残留虚高。按开场时间排序、保留最近 cap 场。
+        if self.per_shop_cap > 0:
+            for key in list(by_key):
+                by_shop: dict[tuple, list[dict]] = {}
+                for g in by_key[key]:
+                    k = (str(g.get("shopId") or ""), str(g.get("scriptId") or ""))
+                    by_shop.setdefault(k, []).append(g)
+                capped: list[dict] = []
+                for items in by_shop.values():
+                    items.sort(key=lambda g: g.get("groupOpenTime") or 0)
+                    capped.extend(items[: self.per_shop_cap])
+                by_key[key] = capped
+
+        # 组局数门槛：组局数低于 threshold 视为噪声不参与
+        #（避免只有 1 场组局在排的冷门本干扰榜单）。
         eligible = {k: gs for k, gs in by_key.items() if len(gs) >= self.threshold}
         if not eligible:
-            raise RuntimeError("拼场频次全部低于门槛，无有效热度信号")
+            raise RuntimeError("拼场组局数全部低于门槛，无有效热度信号")
 
-        # 相对归一化：当天最热剧本（最多店家开）的频次 = 1.0，其余按占比线性拉开。
-        # 拼场是「实时局部」信号，用「占当天最大店数的比例」比固定低阈值更有区分度——
+        # 相对归一化：时间窗内最热剧本（最多组局）的组局数 = 1.0，其余按占比线性拉开。
+        # 拼场是「实时局部」信号，用「占时间窗内最大组局数的比例」比固定低阈值更有区分度——
         # 否则头部剧本 value 会全部封顶 1.0，丧失排序意义。
         max_count = max(len(gs) for gs in eligible.values())
 
         candidates: list[ScriptCandidate] = []
         for key, gs in eligible.items():
-            count = len(gs)
+            count = len(gs)  # 组局数（店 + 本 + 时刻去重）
+            unique_shops = len({(str(g.get("shopId") or ""), str(g.get("scriptId") or "")) for g in gs})
             # 展示字段取信息最全的那条（有标签优先）
             best = max(gs, key=lambda g: (bool(g.get("scriptTag")), len(g.get("joinUserList") or [])))
             tags = [t.strip() for t in (best.get("scriptTag") or "").split("@") if t.strip()]
@@ -160,11 +225,17 @@ class MiquanGroupSource(Source):
                     value=value,
                     signals={
                         "group_count": count,
+                        "shop_count": unique_shops,
                         "raw_group_count": raw_count.get(key, count),
                         "max_count": max_count,
                         "total_groups": total_groups,
-                        "total_shops": total_shops,
+                        "total_instances": total_instances,
                         "threshold": self.threshold,
+                        "window_days": self.time_window_days,
+                        "per_shop_cap": self.per_shop_cap,
+                        "window_start": today.isoformat(),
+                        "window_end": cutoff.isoformat(),
+                        "window_dropped": dropped_out + dropped_no_time,
                         "script_id": str(best.get("scriptId") or ""),
                         "shop": best.get("shopName"),
                     },

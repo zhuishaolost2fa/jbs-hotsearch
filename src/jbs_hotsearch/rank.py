@@ -22,11 +22,16 @@ RECENCY_WINDOW_DAYS = 120
 
 
 def _merge_group(key: str, cands: list[ScriptCandidate], cfg: Config, today: date) -> RankedScript:
-    """同一剧本（同一 title_key）的多个源样本融合成一条榜单项。"""
-    weight_sum = sum(max(c.weight, 0.0) for c in cands) or 1.0
-    base = sum(max(c.weight, 0.0) * c.value for c in cands) / weight_sum
+    """同一剧本（同一 title_key）的多个源样本融合成一条榜单项。
 
-    source_count = len({c.source for c in cands})
+    打分只用「热度源」（weight > 0）：weight=0 的源（如剧本榜降元数据时）
+    只贡献展示字段（评分/标签/封面/人数），不参与 base 和交叉验证计数。
+    """
+    heat_cands = [c for c in cands if c.weight > 0]
+    weight_sum = sum(c.weight for c in heat_cands) or 1.0
+    base = sum(c.weight * c.value for c in heat_cands) / weight_sum
+
+    source_count = len({c.source for c in heat_cands})
     boosted = base * (1.0 + cfg.cross_source_boost * (source_count - 1))
 
     # 新鲜度：源给出 published_at 且在窗口内才加成，避免长期霸榜

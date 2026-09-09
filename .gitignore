@@ -1,6 +1,7 @@
 # 本地运行产物
 data/snapshots/
 data/reports/
+data/site/
 data/*.db
 # 抓包文件含 usertoken / sign（凭证），不进公开仓库；部署时用 scp 单独传
 data/*.txt
