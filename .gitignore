@@ -1,0 +1,15 @@
+# 本地运行产物（抓包文件除外，它是必需的输入）
+data/snapshots/
+data/reports/
+data/*.db
+.env
+.workbuddy/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.DS_Store

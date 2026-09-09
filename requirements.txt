@@ -1,0 +1,4 @@
+# httpx：HTTP 客户端（Supabase PostgREST / 米圈接口 / 搜索 API）
+httpx>=0.27.0
+# 时区数据库：Windows 没有系统 tz database，zoneinfo 取 Asia/Shanghai 会直接报错
+tzdata>=2024.1; sys_platform == "win32"

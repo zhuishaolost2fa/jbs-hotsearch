@@ -1,0 +1,8 @@
+# 保证壳脚本在 Linux 服务器上一定是 LF —— CRLF 的 shebang 会直接 "bad interpreter"
+*.sh text eol=lf
+*.service text eol=lf
+*.sql text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf

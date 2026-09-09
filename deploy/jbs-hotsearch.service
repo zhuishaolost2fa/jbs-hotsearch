@@ -1,0 +1,18 @@
+[Unit]
+Description=jbs-hotsearch daily top10 service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/jbs-hotsearch
+EnvironmentFile=/opt/jbs-hotsearch/.env
+ExecStart=/opt/jbs-hotsearch/.venv/bin/hotsearch serve
+Restart=always
+RestartSec=30
+# 常驻进程每天只醒一次，日志量很小；按天切割交给 journald 足够
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

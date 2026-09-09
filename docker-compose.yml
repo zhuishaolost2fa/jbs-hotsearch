@@ -1,0 +1,20 @@
+services:
+  hotsearch:
+    build: .
+    image: jbs-hotsearch:latest
+    container_name: jbs-hotsearch
+    restart: unless-stopped
+    # 容器里的时间必须是北京时间，否则 HS_RUN_AT=09:00 会按 UTC 触发（= 北京时间 17 点）
+    environment:
+      TZ: Asia/Shanghai
+      HS_DATA_DIR: /app/data
+      HS_SOURCE_MIQUAN_CURLS_FILE: /app/data/miquan_curls.txt
+    env_file: .env
+    volumes:
+      # 左换成服务器上的绝对路径也行；data/ 里的 miquan_curls.txt 是必需输入，不要删
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
