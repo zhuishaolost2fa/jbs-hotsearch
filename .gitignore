@@ -3,6 +3,8 @@ data/snapshots/
 data/reports/
 data/site/
 data/social/
+# 监听大盘的静态产物（index.html / status.json），里面带错误信息与内部地址
+data/dashboard/
 data/*.db
 # 抓包文件含 usertoken / sign（凭证），不进公开仓库；部署时用 scp 单独传
 data/*.txt
