@@ -15,9 +15,7 @@
 from __future__ import annotations
 
 import html
-import json
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -86,10 +84,40 @@ def _poster_item(item: RankedScript) -> str:
     </li>"""
 
 
-def render_poster_html(board: DailyBoard, board_date: str, width: int = 1080, height: int = 1440) -> str:
-    """渲染竖版海报 HTML（body 固定尺寸，一屏即完整海报）。"""
+def _filtered_chips(filtered: list[RankedScript], limit: int) -> str:
+    """已解析区块：两列紧凑 chips（删除线 + 原热度），超出 limit 折叠成「等 N 本」。"""
+    if not filtered:
+        return ""
+    shown = filtered[:limit]
+    overflow = len(filtered) - len(shown)
+    chips = "".join(
+        f'<li class="chip"><span class="strike">{_escape(it.title)}</span>'
+        f'<span class="fscore">{it.hot_score:.0f}</span></li>'
+        for it in shown
+    )
+    if overflow > 0:
+        chips += f'<li class="chip chip-more">等 {overflow} 本</li>'
+    return f"""
+  <section class="parsed">
+    <h3>已解析 · 未入榜</h3>
+    <p class="phint">热度够进榜，但 DM 手册已在库，本轮剔除</p>
+    <ul class="chips">{chips}</ul>
+  </section>"""
+
+
+def render_poster_html(
+    board: DailyBoard,
+    board_date: str,
+    width: int = 1080,
+    height: int = 1440,
+    show_parsed: bool = True,
+    parsed_limit: int = 6,
+) -> str:
+    """渲染竖版海报 HTML（body 尺寸随内容变化，一屏即完整海报）。"""
     items = board.items
     cards = "".join(_poster_item(it) for it in items)
+    filtered = board.filtered_items if show_parsed else []
+    parsed_block = _filtered_chips(filtered, parsed_limit)
     sub = "米圈杭州拼场 · 近 3 天真实组局"
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -97,13 +125,14 @@ def render_poster_html(board: DailyBoard, board_date: str, width: int = 1080, he
 <meta charset="utf-8">
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-html, body {{ width: {width}px; height: {height}px; overflow: hidden; }}
+/* 高度不写死：视口给保底，内容更高时由截图器量出来后放大视口（只放大不收缩，单调收敛） */
+html, body {{ width: {width}px; overflow: hidden; }}
 body {{
   font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
   background: #f5f3ee; color: #211d18;
 }}
-.poster {{ width: 100%; height: 100%; padding: 0 48px 26px; display: flex; flex-direction: column; }}
+.poster {{ width: 100%; padding: 0 48px 26px; display: flex; flex-direction: column; }}
 .hero {{
   background: linear-gradient(135deg, #3a2015 0%, #6b2c1c 45%, #c8502a 100%);
   color: #fff; border-radius: 0 0 26px 26px;
@@ -140,6 +169,19 @@ body {{
 .score .unit {{ font-size: 15px; font-weight: 500; color: #8c8578; margin-top: 2px; }}
 
 .footer {{ text-align: center; color: #8c8578; font-size: 19px; margin-top: 2px; letter-spacing: 1px; }}
+
+.parsed {{ margin-top: 14px; }}
+.parsed h3 {{ font-size: 24px; font-weight: 700; color: #6b6257; margin-bottom: 2px; }}
+.parsed .phint {{ font-size: 18px; color: #9c9488; margin-bottom: 8px; }}
+.chips {{ list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }}
+.chip {{
+  display: flex; align-items: center; gap: 8px;
+  background: #efece5; border: 1px dashed #d6cfc3; border-radius: 20px;
+  padding: 7px 14px; font-size: 21px; color: #7d7466;
+}}
+.chip .strike {{ text-decoration: line-through; text-decoration-thickness: 2px; }}
+.chip .fscore {{ font-size: 17px; color: #a89e8e; }}
+.chip-more {{ background: #f7f5f0; color: #a89e8e; font-style: italic; }}
 </style>
 </head>
 <body>
@@ -150,7 +192,7 @@ body {{
     <div class="sub">{sub}</div>
     <div class="date">{_escape(board_date)}</div>
   </header>
-  <ol class="list">{cards}</ol>
+  <ol class="list">{cards}</ol>{parsed_block}
   <div class="footer">热度由近 3 天真实组局计算 · 每日更新</div>
 </div>
 </body>
@@ -158,7 +200,12 @@ body {{
 
 
 def _screenshot_png(html_path: Path, png_path: Path, width: int, height: int, scale: int) -> None:
-    """用 Playwright 无头浏览器把海报 HTML 截成 PNG。"""
+    """用 Playwright 无头浏览器把海报 HTML 截成 PNG。
+
+    高度自适应（只放大不收缩，单调收敛）：
+    初始视口 = height（保底，如 1440 的 3:4 基准），量出 body 实际内容高度，
+    若更高则放大视口后再量，直至收敛。这样内容多时海报自动变长，内容少时保持 3:4。
+    """
     from playwright.sync_api import sync_playwright
 
     png_path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +219,19 @@ def _screenshot_png(html_path: Path, png_path: Path, width: int, height: int, sc
             )
             page.goto(html_path.as_uri())
             page.wait_for_load_state("networkidle")
+            for _ in range(3):  # 内容恒定，一两轮必收敛；3 轮是保险
+                real = int(
+                    page.evaluate(
+                        "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)"
+                    )
+                    or 0
+                )
+                real = max(real, height)
+                if abs(real - height) <= 2:
+                    break
+                height = real
+                page.set_viewport_size({"width": width, "height": height})
+                page.wait_for_load_state("networkidle")
             page.screenshot(path=str(png_path), full_page=False)
         finally:
             browser.close()
@@ -182,6 +242,9 @@ def _board_summary(board: DailyBoard) -> str:
     for it in board.items:
         meta = _item_meta(it)
         lines.append(f"{it.rank}. {it.title}（热度 {it.hot_score:.0f}" + (f"，{meta}" if meta else "") + "）")
+    if board.filtered_items:
+        parsed = "、".join(it.title for it in board.filtered_items)
+        lines.append(f"已解析（攻略已上线，未入榜）：{parsed}")
     return "\n".join(lines)
 
 
@@ -206,7 +269,8 @@ def _caption_via_llm(cfg: Config, board: DailyBoard) -> str | None:
         "请以小红书剧本杀垂类博主的语气写一段发布文案，要求：\n"
         "1. 第一行是标题，带 1-2 个 emoji，要有钩子（点出榜首或最大黑马）\n"
         "2. 正文 2-4 句话，口语化，点出 1-3 个值得关注的点（榜首、上升快、新上榜）\n"
-        "3. 结尾 3-5 个话题标签，如 #剧本杀 #杭州剧本杀 #周末去哪儿\n"
+        "3. 若提供了「已解析」剧本，加一句引导：这些本的 DM 手册攻略已整理好，可私信或看主页获取\n"
+        "4. 结尾 3-5 个话题标签，如 #剧本杀 #杭州剧本杀 #周末去哪儿\n"
         "直接输出文案，不要任何解释或前后缀。"
     )
     try:
@@ -332,12 +396,22 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
     height = max(480, int(cfg.social_poster_height))
     scale = max(1, int(cfg.social_poster_scale))
 
-    # 1) 海报 HTML
-    poster_html = social_dir / "poster.html"
-    poster_html.write_text(render_poster_html(board, board_date, width, height), encoding="utf-8")
-    result["poster_html"] = str(poster_html)
+    # 1) 海报 HTML（底部「已解析·未入榜」区块受 social_show_parsed / social_parsed_limit 控制；
+    #    内容更高时截图器会自动加长视口，无需在此估算高度）
+    show_parsed = bool(cfg.social_show_parsed)
+    parsed_limit = max(1, int(cfg.social_parsed_limit))
+    parsed_section = _filtered_chips(board.filtered_items, parsed_limit) if show_parsed else ""
 
-    # 2) 截图 PNG
+    poster_html = social_dir / "poster.html"
+    poster_html.write_text(
+        render_poster_html(board, board_date, width, height, show_parsed, parsed_limit),
+        encoding="utf-8",
+    )
+    result["poster_html"] = str(poster_html)
+    result["parsed_count"] = len(board.filtered_items) if show_parsed else 0
+    result["parsed_in_poster"] = bool(parsed_section)
+
+    # 2) 截图 PNG（视口高度自适应实际内容，初始给 3:4 保底）
     png_name = f"{board_date}.png"
     png_path = social_dir / png_name
     try:

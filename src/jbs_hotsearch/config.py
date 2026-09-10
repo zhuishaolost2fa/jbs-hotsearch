@@ -111,11 +111,33 @@ class Config:
     filter_parsed_enabled: bool = True
     filter_buffer_multiplier: int = 3
 
+    # ---- 监听大盘（watch）----
+    watch_host: str = "127.0.0.1"
+    watch_port: int = 8787
+    watch_days: int = 30               # 大盘回看窗口
+    watch_grace_minutes: int = 60      # 过了计划时间 + 宽限还没有记录 = 判「今天没跑」
+    watch_refresh_seconds: int = 60    # 页面自动刷新间隔
+    watch_cache_seconds: int = 20      # 服务端回源 Supabase 的最小间隔
+    watch_webhook_url: str = ""        # 出问题时的告警出口（POST JSON），留空则不告警
+
+    # ---- 大盘上的其它任务（jbsttj-backend / 前端站点，共用同一个 Supabase）----
+    watch_site_origin: str = "https://www.jbs-ttj.store"   # SEO / GEO 产物的线上域名
+    watch_dm_enabled: bool = True      # DM 手册解析（script_dm_jobs）
+    watch_seo_enabled: bool = True     # SEO / GEO 静态产物（sitemap / llms.txt / feed）
+    # 中间态任务卡住多久算「僵尸」（Celery worker 挂了就会留下一堆卡住的任务）
+    watch_stuck_hours: int = 2
+    # 探测线上产物的单个请求超时（5 个产物并发探测，总耗时≈这一个值）
+    watch_http_timeout: float = 6.0
+
     # ---- 小红书素材（海报截图 + LLM 文案）----
     social_enabled: bool = True
     social_poster_width: int = 1080
     social_poster_height: int = 1440
     social_poster_scale: int = 2
+    # 海报底部是否追加「已解析·未入榜」区块（DM 手册已在库、被本轮剔除的剧本）
+    social_show_parsed: bool = True
+    # 该区块最多展示几本，超出折叠成「等 N 本」
+    social_parsed_limit: int = 6
 
     @property
     def http_timeout(self) -> float:
@@ -168,6 +190,20 @@ class Config:
             social_poster_width=_get_int("HS_SOCIAL_POSTER_WIDTH", 1080),
             social_poster_height=_get_int("HS_SOCIAL_POSTER_HEIGHT", 1440),
             social_poster_scale=_get_int("HS_SOCIAL_POSTER_SCALE", 2),
+            social_show_parsed=_get_bool("HS_SOCIAL_SHOW_PARSED", True),
+            social_parsed_limit=_get_int("HS_SOCIAL_PARSED_LIMIT", 6),
+            watch_host=_get("HS_WATCH_HOST", "127.0.0.1"),
+            watch_port=_get_int("HS_WATCH_PORT", 8787),
+            watch_days=_get_int("HS_WATCH_DAYS", 30),
+            watch_grace_minutes=_get_int("HS_WATCH_GRACE_MINUTES", 60),
+            watch_refresh_seconds=_get_int("HS_WATCH_REFRESH", 60),
+            watch_cache_seconds=_get_int("HS_WATCH_CACHE_SECONDS", 20),
+            watch_webhook_url=_get("HS_WATCH_WEBHOOK_URL"),
+            watch_site_origin=_get("HS_WATCH_SITE_ORIGIN", "https://www.jbs-ttj.store").rstrip("/"),
+            watch_dm_enabled=_get_bool("HS_WATCH_DM_ENABLED", True),
+            watch_seo_enabled=_get_bool("HS_WATCH_SEO_ENABLED", True),
+            watch_stuck_hours=_get_int("HS_WATCH_STUCK_HOURS", 2),
+            watch_http_timeout=_get_float("HS_WATCH_HTTP_TIMEOUT", 10.0),
         )
         # 剧本榜降为元数据：热度完全由拼场决定，剧本榜只提供展示字段。
         # 通过把 miquan 源权重置 0 实现（rank.py 里 weight=0 的源不参与打分）。
