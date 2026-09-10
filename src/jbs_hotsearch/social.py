@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,29 @@ from .config import Config
 from .models import DailyBoard, RankedScript
 
 logger = logging.getLogger(__name__)
+
+# LLM 偶发「重复退化」：结尾刷出上百个相同 emoji（如 😉😉😉…）。
+# 这里只压缩「非中文/非字母数字」符号的连续重复（3 个及以上压成 1 个），
+# 因此「哈哈哈」「！！！」这类合法中文表达不会被误伤。
+_REPEAT_RUN = re.compile(r"([^\s\w\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\1{2,}")
+_CAPTION_MAX_LEN = 600
+
+
+def _sanitize_caption(text: str) -> str:
+    """清洗 LLM 文案：压掉重复符号串、去空行、超长截断。"""
+    if not text:
+        return ""
+    cleaned = _REPEAT_RUN.sub(r"\1", text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    if len(cleaned) > _CAPTION_MAX_LEN:
+        cut = cleaned[:_CAPTION_MAX_LEN].rstrip()
+        # 尽量在句子边界截断，避免半句话
+        for sep in ("\n", "。", "！", "？"):
+            pos = cut.rfind(sep)
+            if pos > _CAPTION_MAX_LEN * 0.6:
+                return cut[: pos + 1]
+        return cut + "…"
+    return cleaned
 
 
 def _escape(value: Any) -> str:
@@ -237,13 +261,31 @@ def _screenshot_png(html_path: Path, png_path: Path, width: int, height: int, sc
             browser.close()
 
 
-def _board_summary(board: DailyBoard) -> str:
+def _parsed_for_caption(board: DailyBoard, ratio: float, max_n: int) -> list[RankedScript]:
+    """挑出值得写进文案的已解析剧本：原热度 ≥ 榜首热度 × ratio，按热度降序取前 max_n 本。
+
+    为什么按「相对榜首」而不是绝对分数：每天热度尺度会漂移（有时榜首 100、有时 60），
+    绝对值阈值不稳定；相对榜首能稳定表达「这个本够不够格跟榜首相提并论」。
+    """
+    if not board.items or not board.filtered_items:
+        return []
+    top = float(board.items[0].hot_score or 0)
+    if ratio <= 0:  # 0 = 不筛选
+        picked = list(board.filtered_items)
+    else:
+        threshold = top * ratio
+        picked = [it for it in board.filtered_items if float(it.hot_score or 0) >= threshold]
+    picked.sort(key=lambda it: -float(it.hot_score or 0))
+    return picked[: max(1, max_n)]
+
+
+def _board_summary(board: DailyBoard, caption_parsed: list[RankedScript] | None = None) -> str:
     lines = []
     for it in board.items:
         meta = _item_meta(it)
         lines.append(f"{it.rank}. {it.title}（热度 {it.hot_score:.0f}" + (f"，{meta}" if meta else "") + "）")
-    if board.filtered_items:
-        parsed = "、".join(it.title for it in board.filtered_items)
+    if caption_parsed:
+        parsed = "、".join(f"{it.title}（原热度 {it.hot_score:.0f}）" for it in caption_parsed)
         lines.append(f"已解析（攻略已上线，未入榜）：{parsed}")
     return "\n".join(lines)
 
@@ -254,6 +296,7 @@ _TEMPLATE_CAPTION = """📊 杭州剧本杀热度榜 · {date}
 
 完整 Top10：
 {summary}
+{parsed_line}
 
 #剧本杀 #杭州剧本杀 #周末去哪玩 #热门剧本杀 #剧本杀推荐"""
 
@@ -262,15 +305,27 @@ def _caption_via_llm(cfg: Config, board: DailyBoard) -> str | None:
     """调 SiliconFlow 生成小红书文案；失败返回 None 走模板。"""
     if not cfg.llm_api_key:
         return None
-    summary = _board_summary(board)
+    # 已解析本按热度筛选后再喂给 LLM，避免冷门本占用文案篇幅
+    caption_parsed = _parsed_for_caption(
+        board, cfg.social_caption_parsed_ratio, cfg.social_caption_parsed_max
+    )
+    summary = _board_summary(board, caption_parsed)
+    parsed_names = "、".join(it.title for it in caption_parsed)
+    parsed_hint = (
+        f"4. 文末必须点名提到这些已解析剧本：{parsed_names}。"
+        "说明它们热度够高但攻略已整理好（DM 手册已入库），并引导读者私信或看主页获取攻略；"
+        "注意不要把它们写成榜内排名，它们是「已解析未入榜」\n"
+        if parsed_names
+        else ""
+    )
     prompt = (
         f"以下是今天（{board.board_date.isoformat()}）的杭州剧本杀热度榜 Top{len(board.items)}：\n"
         f"{summary}\n\n"
         "请以小红书剧本杀垂类博主的语气写一段发布文案，要求：\n"
         "1. 第一行是标题，带 1-2 个 emoji，要有钩子（点出榜首或最大黑马）\n"
         "2. 正文 2-4 句话，口语化，点出 1-3 个值得关注的点（榜首、上升快、新上榜）\n"
-        "3. 若提供了「已解析」剧本，加一句引导：这些本的 DM 手册攻略已整理好，可私信或看主页获取\n"
-        "4. 结尾 3-5 个话题标签，如 #剧本杀 #杭州剧本杀 #周末去哪儿\n"
+        "3. 结尾 3-5 个话题标签，如 #剧本杀 #杭州剧本杀 #周末去哪儿\n"
+        f"{parsed_hint}"
         "直接输出文案，不要任何解释或前后缀。"
     )
     try:
@@ -285,6 +340,8 @@ def _caption_via_llm(cfg: Config, board: DailyBoard) -> str | None:
                 ],
                 "temperature": 0.8,
                 "max_tokens": 400,
+                # 从源头抑制「重复退化」（曾出现过结尾刷上百个 😉 的情况）
+                "repetition_penalty": 1.15,
             },
             timeout=cfg.http_timeout + 30.0,
         )
@@ -292,27 +349,34 @@ def _caption_via_llm(cfg: Config, board: DailyBoard) -> str | None:
             logger.warning("文案 LLM 返回 %s：%s", resp.status_code, resp.text[:200])
             return None
         content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "")
-        content = (content or "").strip().strip('"').strip()
+        content = _sanitize_caption((content or "").strip().strip('"'))
         return content or None
     except Exception as exc:  # noqa: BLE001
         logger.warning("文案 LLM 调用失败，回退模板：%s", exc)
         return None
 
 
-def _template_caption(board: DailyBoard) -> str:
+def _template_caption(board: DailyBoard, caption_parsed: list[RankedScript] | None = None) -> str:
     top1 = board.items[0].title if board.items else "——"
     summary = "\n".join(f"{it.rank}. {it.title}" for it in board.items)
+    parsed_line = ""
+    if caption_parsed:
+        names = "、".join(f"《{it.title}》" for it in caption_parsed)
+        parsed_line = f"\n📚 已解析攻略已上线（热度够但未入榜）：{names}，私信获取～"
     return _TEMPLATE_CAPTION.format(
-        date=board.board_date.isoformat(), top1=top1, summary=summary
+        date=board.board_date.isoformat(), top1=top1, summary=summary, parsed_line=parsed_line
     )
 
 
 def _gen_caption(cfg: Config, board: DailyBoard) -> tuple[str, str]:
     """返回 (文案, 来源)；来源 = llm / template。"""
+    caption_parsed = _parsed_for_caption(
+        board, cfg.social_caption_parsed_ratio, cfg.social_caption_parsed_max
+    )
     llm_text = _caption_via_llm(cfg, board)
     if llm_text:
         return llm_text, "llm"
-    return _template_caption(board), "template"
+    return _template_caption(board, caption_parsed), "template"
 
 
 def _render_material_page(board_date: str, png_name: str, caption: str, caption_source: str) -> str:

@@ -138,6 +138,12 @@ class Config:
     social_show_parsed: bool = True
     # 该区块最多展示几本，超出折叠成「等 N 本」
     social_parsed_limit: int = 6
+    # 文案里点名提到已解析剧本的热度门槛：原热度 ≥ 榜首热度 × 该比例才值得写进文案。
+    # 用意是「冷门的已解析本（如 25 分）不值得占文案篇幅，但比榜首还热的一定要提」。
+    # 设 0 = 不筛选（全部已解析本都塞给 LLM）。
+    social_caption_parsed_ratio: float = 0.5
+    # 文案里最多点名几本已解析（按热度降序取前 N 本）
+    social_caption_parsed_max: int = 2
 
     @property
     def http_timeout(self) -> float:
@@ -192,6 +198,8 @@ class Config:
             social_poster_scale=_get_int("HS_SOCIAL_POSTER_SCALE", 2),
             social_show_parsed=_get_bool("HS_SOCIAL_SHOW_PARSED", True),
             social_parsed_limit=_get_int("HS_SOCIAL_PARSED_LIMIT", 6),
+            social_caption_parsed_ratio=_get_float("HS_SOCIAL_CAPTION_PARSED_RATIO", 0.5),
+            social_caption_parsed_max=_get_int("HS_SOCIAL_CAPTION_PARSED_MAX", 2),
             watch_host=_get("HS_WATCH_HOST", "127.0.0.1"),
             watch_port=_get_int("HS_WATCH_PORT", 8787),
             watch_days=_get_int("HS_WATCH_DAYS", 30),
