@@ -23,8 +23,12 @@ services:
   # 单独一个容器，是为了让「出榜的」和「看出榜的」互不影响 ——
   # 出榜挂了的时候，大盘必须还活着，否则连挂了都不知道。
   watch:
-    build: .
-    image: jbs-hotsearch:latest
+    # 用专用轻量镜像（Dockerfile.watch），不装 playwright ——
+    # 出榜镜像光 apt 拉 chromium 依赖就要十几分钟，大盘不需要，改一行大盘代码不该等那么久
+    build:
+      context: .
+      dockerfile: Dockerfile.watch
+    image: jbs-hotsearch-watch:latest
     container_name: jbs-hotsearch-watch
     restart: unless-stopped
     environment:

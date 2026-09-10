@@ -1,0 +1,24 @@
+# 监听大盘专用镜像 —— 与出榜镜像分开，因为两者的依赖量级差了两个数量级。
+#
+# 出榜容器要 playwright + chromium（截图做小红书素材），光 apt 拉字体就要十几分钟，
+# 而大盘只用标准库：watchdog / dashboard / watch 都不 import 第三方包，
+# 带 httpx 的模块（pipeline / sources / social）在 cli.py 里是延迟加载的。
+#
+# 合用一个镜像的后果：改一行大盘代码也要重跑 15 分钟构建，还白白多出几百 MB。
+# 分开之后这里构建只要几秒，且「依赖装不上也要能看大盘」这条路径被镜像层面保证了。
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TZ=Asia/Shanghai \
+    PYTHONPATH=/app/src
+
+WORKDIR /app
+
+# 只拷源码，不装任何 pip 包 —— 大盘刻意保持零第三方依赖
+COPY src ./src
+
+EXPOSE 8787
+
+CMD ["python", "-m", "jbs_hotsearch", "watch"]
