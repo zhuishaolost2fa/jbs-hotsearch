@@ -218,7 +218,7 @@ class SearchLLMSource(Source):
             )
             try:
                 parsed = self._call_llm(chunks)
-            except Exception as exc:  # noqa: BLE001 - 单个 query 抽失败不算整源失败
+            except Exception:  # noqa: BLE001 - 单个 query 抽失败不算整源失败
                 continue
             for entry in parsed.get("scripts") or []:
                 title = (entry.get("title") or "").strip()

@@ -1,0 +1,24 @@
+[Unit]
+Description=jbs-hotsearch watch dashboard (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/jbs-hotsearch
+EnvironmentFile=/opt/jbs-hotsearch/.env
+# 单独一个 unit，跟出榜服务分开：出榜挂了的时候，大盘必须还活着，
+# 否则连「挂了」这件事都发现不了。
+#
+# 默认只听本机。要别的机器能访问就改成 0.0.0.0 —— 但页面里有错误信息等内部细节，
+# 务必配防火墙 / 反代鉴权 / SSH 隧道，别裸奔公网。
+Environment=HS_WATCH_HOST=127.0.0.1
+Environment=HS_WATCH_PORT=8787
+ExecStart=/opt/jbs-hotsearch/.venv/bin/hotsearch watch --no-open
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -22,7 +22,7 @@ from pathlib import Path
 import httpx
 
 from ..models import ScriptCandidate
-from .base import Source, normalize_values
+from .base import Source
 
 API_URL_DEFAULT = "https://juzujujk.joylovemeet.cn/v9/script/scriptSearchPage"
 

@@ -33,7 +33,11 @@ def run(cfg: Config) -> int:
         else:
             from .sources.miquan import parse_curl
 
-            lines = [l for l in path.read_text(encoding="utf-8").splitlines() if parse_curl(l)]
+            lines = [
+                line
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if parse_curl(line)
+            ]
             print(f"  ✅ 米圈：{path.name} 共 {len(lines)} 页可用")
             if lines:
                 src = MiquanSource(cfg)

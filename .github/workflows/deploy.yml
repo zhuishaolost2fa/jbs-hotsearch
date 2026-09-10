@@ -1,0 +1,70 @@
+name: 部署
+
+on:
+  # 只在 CI 跑绿之后部署，用 workflow_run 而不是 push，
+  # 就是为了让「检查没过就不上线」成为硬约束。
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  # 也支持手动点：Actions → Deploy → Run workflow
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: 服务器重建容器
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      APP_DIR: ${{ vars.APP_DIR }}
+    steps:
+      - name: 校验 Secrets 是否配齐
+        run: |
+          missing=0
+          [ -n "$SSH_PRIVATE_KEY" ] || { echo "::error::缺 Secret：SSH_PRIVATE_KEY"; missing=1; }
+          [ -n "$SSH_HOST" ]        || { echo "::error::缺 Secret：SSH_HOST"; missing=1; }
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::去 Settings → Secrets and variables → Actions 配上再跑"
+            exit 1
+          fi
+
+      # 不用第三方 ssh action：这一步只有二十行，自己写免掉一层供应链
+      - name: 装 SSH 私钥
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: git pull + 重建容器
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=yes \
+              "${SSH_USER:-root}@$SSH_HOST" \
+              "cd ${APP_DIR:-/opt/jbs-hotsearch} && git pull --ff-only && ./deploy/server-deploy.sh docker update"
+
+      # 只确认「服务活着并应答」，不把「今天还没出榜」判成部署失败：
+      # 200 = 今天已出榜；503 = 今天没出榜（可能只是没到点），两者都说明大盘是活的。
+      - name: 部署后探活
+        run: |
+          code=$(ssh -i ~/.ssh/id_ed25519 -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=yes \
+                 "${SSH_USER:-root}@$SSH_HOST" \
+                 'curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:8787/healthz' \
+                 || echo "000")
+          echo "healthz 返回：$code"
+          case "$code" in
+            200) echo "✓ 大盘应答，今天已出榜" ;;
+            503) echo "✓ 大盘应答，今天还没出榜（正常，等定时任务）" ;;
+            *)   echo "::error::大盘没应答（$code），部署可能失败，上服务器看 docker compose logs"; exit 1 ;;
+          esac
+
+      - name: 清场
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519

@@ -74,17 +74,20 @@ systemd_install() {
   ./.venv/bin/pip install .
   sed "s#/opt/jbs-hotsearch#$APP_DIR#g" deploy/jbs-hotsearch.service \
     | tee /etc/systemd/system/jbs-hotsearch.service >/dev/null
+  # 监听大盘单独一个 unit：出榜的挂了时，大盘必须还活着
+  sed "s#/opt/jbs-hotsearch#$APP_DIR#g" deploy/jbs-hotsearch-watch.service \
+    | tee /etc/systemd/system/jbs-hotsearch-watch.service >/dev/null
   systemctl daemon-reload
-  systemctl enable jbs-hotsearch
-  systemctl restart jbs-hotsearch
-  systemctl --no-pager status jbs-hotsearch | head -20
+  systemctl enable jbs-hotsearch jbs-hotsearch-watch
+  systemctl restart jbs-hotsearch jbs-hotsearch-watch
+  systemctl --no-pager status jbs-hotsearch jbs-hotsearch-watch | head -24
 }
 
 systemd_update() {
   systemd_cmd_available
   ./.venv/bin/pip install .
-  systemctl restart jbs-hotsearch
-  systemctl --no-pager status jbs-hotsearch | head -20
+  systemctl restart jbs-hotsearch jbs-hotsearch-watch
+  systemctl --no-pager status jbs-hotsearch jbs-hotsearch-watch | head -24
 }
 
 systemd_run() { # once / doctor
@@ -109,8 +112,8 @@ case "$MODE" in
       update)     systemd_update ;;
       once)       systemd_run once ;;
       doctor)     systemd_run doctor ;;
-      logs)       journalctl -u jbs-hotsearch -f --since today ;;
-      status)     systemctl --no-pager status jbs-hotsearch | head -20 ;;
+      logs)       journalctl -u jbs-hotsearch -u jbs-hotsearch-watch -f --since today ;;
+      status)     systemctl --no-pager status jbs-hotsearch jbs-hotsearch-watch | head -24 ;;
       *)          die "未知操作：$ACTION" ;;
     esac
     ;;

@@ -8,13 +8,20 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta, timezone, tzinfo
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_FALLBACK_OFFSET_HOURS = 8
 
 
+@lru_cache(maxsize=8)
 def get_tz(name: str, fallback_offset_hours: float = DEFAULT_FALLBACK_OFFSET_HOURS) -> tzinfo:
+    """取时区；ZoneInfo 不可用时回退固定偏移。
+
+    带缓存有两个理由：ZoneInfo 构造本身有开销，更重要的是**避免同一条 warning 反复刷屏**
+    —— 常驻进程里每次回源都会调一次，不缓存的话一天能打几千行。
+    """
     try:
         from zoneinfo import ZoneInfo
 

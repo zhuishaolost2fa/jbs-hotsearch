@@ -18,6 +18,8 @@
                      └─► 本地 SQLite + JSON 快照（降级）
                           ▼
                   Markdown 报告 + 运行日志
+                          ▼
+              监听大盘（热门榜 / DM 解析 / SEO·GEO 是否跑成）
 ```
 
 ---
@@ -32,6 +34,7 @@ cp .env.example .env                                   # 填 Supabase 凭据
 python -m jbs_hotsearch preview      # 只算不写，先看看榜单长什么样
 python -m jbs_hotsearch doctor       # 环境与权限自检
 python -m jbs_hotsearch once         # 正式跑一次：写库 + 写报告
+python -m jbs_hotsearch status       # 看最近这些天跑没跑成（详见第 6 节）
 ```
 
 `once` 的产物：
@@ -144,6 +147,9 @@ sudo ./deploy/server-deploy.sh systemd once
 journalctl -u jbs-hotsearch -f                  # 或 systemd logs
 ```
 
+> `install` 会注册**两个** unit：`jbs-hotsearch`（出榜）和 `jbs-hotsearch-watch`（监听大盘）。
+> 分开是为了出榜挂掉时大盘还活着。watch 默认只听 `127.0.0.1:8787`，要远程访问改 unit 里的 `HS_WATCH_HOST`。
+
 ### C. Windows 计划任务（本机长期开着）
 
 ```powershell
@@ -152,6 +158,48 @@ schtasks /Create /TN jbs-hotsearch /SC ONLOGON /DELAY 0001:00 ^
 ```
 
 进程每天只醒一次（其余时间在 sleep），内存几十 MB，可以忽略。
+
+### D. CI/CD：push 到 main 自动部署（可选）
+
+仓库自带两个工作流，配好后就是「本地 push → 服务器自动重建」：
+
+| 工作流 | 触发时机 | 干什么 |
+|---|---|---|
+| `.github/workflows/ci.yml` | push / PR 到 main | `ruff` 静态检查 → 全量编译 → `status` 冒烟（Python 3.11 / 3.12 各跑一遍） |
+| `.github/workflows/deploy.yml` | CI 跑**绿**之后，或手动 Run workflow | SSH 到服务器 `git pull` → `server-deploy.sh docker update` → 打 `/healthz` 探活 |
+
+**一次性配置**（Settings → Secrets and variables → Actions）：
+
+| 位置 | 名称 | 说明 |
+|---|---|---|
+| Secrets | `SSH_PRIVATE_KEY` | 能免密登录服务器的私钥，ed25519 整段含首尾行 |
+| Secrets | `SSH_HOST` | 服务器域名或 IP |
+| Secrets | `SSH_USER` | 可选，默认 `root` |
+| Secrets | `SSH_PORT` | 可选，默认 `22` |
+| Variables | `APP_DIR` | 可选，默认 `/opt/jbs-hotsearch` |
+
+还有一条容易漏：**服务器自己要能免密 `git pull`**。GitHub Actions 只是 SSH 上去执行 `git pull`，服务器拉代码用的是它自己的身份：
+
+- 服务器 origin 是 HTTPS 且仓库公开 → 直接就能拉，什么都不用配
+- 服务器 origin 是 `git@github.com:...` 或仓库私有 → 配一个只读 Deploy Key（Settings → Deploy keys），或改 HTTPS + token
+
+还有个更常见的坑：**服务器工作区必须是干净的**。`git pull --ff-only` 遇到本地未提交改动会直接失败，
+CI 上看到的就是 `error: Your local changes would be overwritten`。
+所以服务器上别直接改代码 —— 改了就提交推回 GitHub，别留在工作区里。
+
+PR 只跑检查不部署；只有 push 到 main 且 CI 全绿才会上线。手动触发在 Actions → Deploy → Run workflow。
+
+> CI 里**故意不装** `httpx` / `playwright`（后者还要拉 chromium，又慢又重）。
+> `status` / `watch` 走的是延迟导入，零第三方依赖就能跑 —— 所以冒烟验的是「代码没写崩、无 `.env` 时降级路径不炸」，不验真实数据源。数据源那部分归服务器上的 `docker doctor` 和 `docker once` 管。
+
+本地想跑跟 CI 完全一样的检查：
+
+```bash
+pip install ruff
+ruff check src/                                  # 规则写在 pyproject.toml 的 [tool.ruff.lint]
+python -m compileall -q src/
+PYTHONPATH=src python -m jbs_hotsearch status --days 1
+```
 
 ### 上线后怎么确认它真的在跑
 
@@ -181,8 +229,136 @@ from script_hot_runs order by board_date desc limit 7;
 | `HS_SEARCH_PROVIDER` | `none` | `none` / `bocha` / `tavily` / `serpapi` |
 | `HS_CROSS_SOURCE_BOOST` | `0.15` | 多源交叉验证加成 |
 | `HS_RECENCY_BOOST` | `0.10` | 新本新鲜度加成 |
+| `HS_WATCH_HOST` / `HS_WATCH_PORT` | `127.0.0.1` / `8787` | 大盘监听地址（容器里要 `0.0.0.0`） |
+| `HS_WATCH_DAYS` | `30` | 大盘回看窗口 |
+| `HS_WATCH_GRACE_MINUTES` | `60` | 超时多久判「今天没跑」 |
+| `HS_WATCH_REFRESH` | `60` | 页面自动刷新秒数 |
+| `HS_WATCH_CACHE_SECONDS` | `20` | 服务端回源最小间隔 |
+| `HS_WATCH_WEBHOOK_URL` | 空 | 告警出口，留空不告警 |
+| `HS_WATCH_SITE_ORIGIN` | `https://www.jbs-ttj.store` | SEO / GEO 产物探测的线上域名 |
+| `HS_WATCH_DM_ENABLED` | `true` | 是否盯 DM 手册解析 |
+| `HS_WATCH_SEO_ENABLED` | `true` | 是否盯 SEO / GEO 产物 |
+| `HS_WATCH_STUCK_HOURS` | `2` | 中间态任务卡多久算僵尸 |
+| `HS_WATCH_HTTP_TIMEOUT` | `6` | 探测单个线上产物的超时（并发探测） |
 
-## 6. 排障
+## 6. 监听大盘：每天到底跑没跑成
+
+「今天怎么没出榜」这类问题最怕的是**静默失败** —— 进程活着、日志没人看、榜单停更三天才发现。
+所以项目自带一个只读的监听大盘，盯三件事，回答同一个问题：**今天，到底跑成没跑成**。
+
+| 任务 | 看板 | 留痕在哪 | 性质 |
+|---|---|---|---|
+| **每日热门榜** | `hotsearch` | Supabase `script_hot_runs` | 每天必须跑，没跑 = 缺跑 |
+| **DM 手册解析** | `dm_ingest` | Supabase `script_dm_jobs`（jbsttj-backend 共用同一个 Supabase） | 上传手册才触发，**没任务是常态** |
+| **SEO / GEO 产物** | `seo_geo` | 线上静态文件 `sitemap.xml` / `llms.txt` / `feed.xml`… | 每次部署构建，看产物在不在、对不对 |
+
+三者的判定规则刻意不同 —— 用同一套「没跑就是挂了」去套，DM 解析会天天误报（它本来就不是每天有活），
+SEO 又会在网络抖动时误报（探测不到 ≠ 生成失败）。
+
+```bash
+python -m jbs_hotsearch status              # 终端里直接看（适合 SSH / crontab 邮件）
+python -m jbs_hotsearch status --days 7 --json
+python -m jbs_hotsearch watch               # 起 Web 大盘，默认 http://127.0.0.1:8787
+python -m jbs_hotsearch watch --emit data/dashboard/index.html   # 只生成一份静态页，不启服务
+```
+
+`status` 按任务分段打印（`✖` 失败 / `·` 缺跑 / `!` 可疑 / `✔` 成功 / `–` 无任务 / `…` 未到点 / `⏱` 卡住）：
+
+```
+── 每日热门榜（每天）
+日期          结论         任务    产出       耗时  说明
+2026-09-09  ✔ 成功      23    10     3.3s  miquan miquan_group
+2026-09-08  · 缺跑        -     -        -
+   成功率 3% (1/29) · 连续 1 天
+
+── DM 手册解析（按需）
+2026-09-09  – 无任务       -     -        -
+2026-09-08  ✖ 失败       19    17        -  17 完成 / 2 失败 · 1542 块 / 4799 问答
+             └─ 2 个失败，首个：mao-dao-mou-sha-xun-huan ChordError: ...DatabaseError
+
+── SEO / GEO 产物（每次部署）
+   ✔ /robots.txt      成功  http=200   44 字节
+   ✖ /llms.txt        失败  http=404   产物不存在（404）—— 这次构建可能没生成它
+```
+
+有告警时 `status` 退出码为 1，可直接接进 crontab / CI。
+Web 大盘则是：顶部三张任务卡（今日状态 + 关键指标），下面每块任务一个日历热力图 + 逐日明细，
+SEO / GEO 那块是产物清单（可点击直接打开）。页面每 60s 自动刷新。
+
+### 判定规则
+
+通用等级：`✔ 成功` / `! 可疑` / `✖ 失败` / `· 缺跑` / `… 未到点` / `– 无任务` / `▶ 进行中` / `⏱ 卡住` / `? 未知`。
+
+热门榜（每天型）：
+
+| 结论 | 判据 | 颜色 |
+|---|---|---|
+| 成功 | `status=success` 且真的写出了条目 | 绿 |
+| 可疑 | 跑完了但**条目数为 0**，或部分源失败（`partial`） | 黄 |
+| 失败 | `status=failed` | 红 |
+| 缺跑 | 这天**根本没有运行记录** | 灰 |
+| 未到点 | 今天还没到 `HS_RUN_AT` + 宽限期（不算异常） | 白框 |
+
+DM 手册解析（按需型）：`失败` 优先于 `进行中` 优先于 `成功`；**当天没有任务记为「无任务」，不是异常**。
+额外抓一件热门榜没有的事 —— **僵尸任务**：状态停在 `pending/downloading/extracting/chunking/generating_qa/embedding`
+超过 `HS_WATCH_STUCK_HOURS`（默认 2 小时）的任务会单独告警，这基本等于「Celery worker 没在消费」。
+
+SEO / GEO（产物型）：对每个产物发一次 HTTP 请求，按「状态码 + 内容」判定：
+
+| 情况 | 结论 |
+|---|---|
+| 200 且内容含预期标记（`sitemap.xml` 有 `<urlset`、`llms.txt` 有标题行…） | 成功 |
+| 200 但内容为空、或缺预期标记 | 可疑 |
+| 404 | 失败（这次构建没生成它） |
+| 请求超时 / 网络不通 | **未知**，不算失败 |
+
+> 最后一条是刻意的：**「我查不到」不等于「它挂了」**。探测失败记灰不记红，否则监控机自己网络抖一下就会误报。
+
+三个容易踩空的点，都已经在代码里处理了：
+
+- **一天可能跑很多次**（`save_run` 是追加写）。当天结论取**最后一次**，次数单独显示。
+- **`status=success` 但 `item_count=0` 比报错更危险**，因为没人会发现 —— 单独标成「可疑」。
+- **今天的缺跑要等宽限期**才判定，否则每天 00:00 到 09:00 都会误报。
+
+### 健康检查位 `/healthz`
+
+三块任务**全部**不处于失败 / 缺跑 / 卡住 → `200`；任一出问题 → `503`，响应里写明是哪块：
+
+```bash
+curl -s http://127.0.0.1:8787/healthz
+# {"healthy":false,"today":"2026-09-10",
+#  "tasks":{"hotsearch":"missing","dm_ingest":"idle","seo_geo":"unknown"},
+#  "breaking":["hotsearch"]}
+```
+
+「未到点 / 无任务 / 进行中 / 未知」都算健康，不会误报。
+可直接拿去做容器健康检查、Uptime Kuma 拨测、nginx 上游探活。
+
+Docker 部署时 `docker-compose.yml` 里已经有一个独立的 `watch` 容器在跑它，
+容器状态会直接显示 `healthy` / `unhealthy`：
+
+```bash
+docker ps --filter name=jbs-hotsearch-watch
+```
+
+> 出榜的（`hotsearch`）和看出榜的（`watch`）刻意分成两个容器 ——
+> 出榜挂了的时候，大盘必须还活着。
+
+### 告警（可选）
+
+配了 `HS_WATCH_WEBHOOK_URL` 后，出问题时会 POST 一个 JSON：
+
+```json
+{"service": "jbs-hotsearch", "today": "2026-09-09",
+ "alerts": [{"date": "2026-09-09", "level": "bad", "message": "米圈 sign 失效：400003"}]}
+```
+
+同一个问题只在**状态变化时**推一次，不会每分钟刷屏。留空则不告警。
+
+> 安全提示：页面里含错误信息等内部细节，因为 `script_hot_runs` 的 RLS 只允许 service_role 读，
+> 大盘必须带 service_role key 跑。**别把这个端口直接暴露到公网**，要走反代加鉴权，或只在内网 / SSH 隧道里看。
+
+## 7. 排障
 
 | 症状 | 原因与处理 |
 |---|---|

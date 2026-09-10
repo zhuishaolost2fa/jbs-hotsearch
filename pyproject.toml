@@ -24,3 +24,18 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# ---------------------------------------------------------------- 静态检查
+[tool.ruff]
+line-length = 100
+# 必须显式写死：ruff 靠它判断语法兼容性。写 py311 才能在 CI 里拦住
+# 「f-string 内用反斜杠转义」这类 3.12 才合法的写法（本项目声明支持 3.11）。
+target-version = "py311"
+src = ["src"]
+extend-exclude = ["data", ".venv"]
+
+[tool.ruff.lint]
+# 只开「一定是对的」那批：pyflakes(F) + 明确的语法/缩进错误(E9) + 高危 pycodestyle(E4/E7)。
+# 不开风格类规则（E501 行长、D 文档字符串等）—— 先把回归拦住，别一上来就劝退。
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E731"]
