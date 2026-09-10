@@ -43,10 +43,14 @@ services:
     ports:
       - "8787:8787"
     # 今天出榜成功 / 还没到点 = 200；失败或缺跑 = 503（容器会被标 unhealthy）
+    #
+    # 超时必须给足：快照缓存只有 20s，而健康检查 15 分钟一次，等于每次都是冷启动
+    # —— 要重新查 Supabase + 探测 5 个 SEO 产物，实测 10s 出头。
+    # 之前脚本里写 timeout=10，正好卡在边界上必然超时，容器一直 unhealthy。
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=10).status == 200 else 1)"]
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=30).status == 200 else 1)"]
       interval: 15m
-      timeout: 20s
+      timeout: 45s
       retries: 2
       start_period: 2m
     logging:
