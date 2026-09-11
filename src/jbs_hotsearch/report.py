@@ -37,7 +37,8 @@ def render_markdown(board: DailyBoard) -> str:
     lines.append("| # | 剧本 | 热度 | 较昨日 | 评分 | 人数 | 时长 | 标签 |")
     lines.append("|---|------|------|--------|------|------|------|------|")
     for item in board.items:
-        rating = f"{item.rating:g}" if item.rating else "—"
+        # 未开分如实标注，不用「—」（容易被当成抓取失败），更不能拿别的字段凑数
+        rating = f"{item.rating:g}" if item.rating else "未开分"
         lines.append(
             "| {rank} | **{title}** | {score:.1f} | {badge} | {rating} | {players} | {duration} | {tags} |".format(
                 rank=item.rank,

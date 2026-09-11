@@ -93,7 +93,11 @@ def _item_card(item) -> str:
     # 评分单独成块放在热度右侧：它是玩家口碑，和「热度」是不同的口径，
     # 混在 reason 那句灰色小字里既显眼度不够、又容易和有新手科普性的理由重复。
     rating = item.get("rating")
-    rating_s = f'<span class="rating">评分 {float(rating):g}</span>' if rating else ""
+    if rating:
+        rating_s = f'<span class="rating">评分 {float(rating):g}</span>'
+    else:
+        # 平台未开分就如实标注，绝不留空让人误以为漏抓、更不拿别的字段凑数
+        rating_s = '<span class="rating rating-none">未开分</span>'
     reason = _escape(item.get("reason") or "")
     meta = "".join(_meta_bits(item))
     return f"""
@@ -252,6 +256,9 @@ body {{
   background: #fbf1de; border: 1px solid #f0dcbb;
   padding: 3px 10px; border-radius: 20px;
 }}
+.score .rating-none {{
+  color: var(--muted); background: #f3f0e9; border-color: #e4e0d6; font-weight: 500;
+}}
 .reason {{ font-size: 13px; color: #5b554a; margin-top: 2px; }}
 .metas {{ display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; font-size: 13px; color: var(--muted); }}
 .meta {{ display: inline-flex; align-items: center; gap: 6px; }}
@@ -322,6 +329,7 @@ body {{
   {body}
   <div class="footer">
     热度由米圈杭州拼场「近 3 天真实组局」计算，剧本榜仅作评分/标签参考。<br>
+    评分为谜圈玩家评分；平台尚未开分的剧本标注「未开分」，不做任何估算。<br>
     数据仅供娱乐参考，不代表任何平台官方排名。
   </div>
 </div>
