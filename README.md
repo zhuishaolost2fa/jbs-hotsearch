@@ -172,11 +172,34 @@ schtasks /Create /TN jbs-hotsearch /SC ONLOGON /DELAY 0001:00 ^
 
 | 位置 | 名称 | 说明 |
 |---|---|---|
-| Secrets | `SSH_PRIVATE_KEY` | 能免密登录服务器的私钥，ed25519 整段含首尾行 |
-| Secrets | `SSH_HOST` | 服务器域名或 IP |
-| Secrets | `SSH_USER` | 可选，默认 `root` |
+| Secrets | `SSH_PRIVATE_KEY` | **必填**。能免密登录服务器的私钥，ed25519 整段含首尾行（`-----BEGIN` / `-----END` 也要） |
+| Secrets | `SSH_HOST` | **必填**。服务器域名或 IP |
+| Secrets | `SSH_USER` | **必填**。登录用户名 —— 别信「默认 root」，绝大多数云主机是 `ubuntu` / `ec2-user`，填错只会在最后一步 `Permission denied` |
 | Secrets | `SSH_PORT` | 可选，默认 `22` |
 | Variables | `APP_DIR` | 可选，默认 `/opt/jbs-hotsearch` |
+
+这 3 个必填项缺任何一个，**部署工作流都会红，而且每次 CI 一转绿就自动红一次**
+（它是 `workflow_run` 触发的，不是偶发）。报错长这样：
+
+```
+::error::缺 Secret：SSH_USER（本项目填 ubuntu）
+::error::去 Settings → Secrets and variables → Actions 配上再跑
+```
+
+私钥建议专门生成一把、只给它部署权限，别拿你自己登录用的那把：
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/gha_deploy -N "" -C "github-actions-deploy@<项目>"
+ssh-copy-id -i ~/.ssh/gha_deploy.pub <用户>@<服务器>     # 或手动把 .pub 追加进服务器 ~/.ssh/authorized_keys
+cat ~/.ssh/gha_deploy                                    # 整段粘到 SSH_PRIVATE_KEY
+```
+
+本机想确认这把钥匙行不行，**一定要按 runner 的方式验**（交互式能连不代表批处理能连）：
+
+```bash
+ssh -i ~/.ssh/gha_deploy -o IdentitiesOnly=yes -o BatchMode=yes <用户>@<服务器> \
+    'cd <APP_DIR> && git pull --ff-only && docker compose version'
+```
 
 还有一条容易漏：**服务器自己要能免密 `git pull`**。GitHub Actions 只是 SSH 上去执行 `git pull`，服务器拉代码用的是它自己的身份：
 
