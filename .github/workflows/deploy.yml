@@ -44,6 +44,9 @@ jobs:
             exit 1
           fi
 
+      # 用 `bash xxx.sh` 而不是 `./xxx.sh`：后者依赖文件在仓库里的可执行位，
+      # 一旦那个位丢了（在 Windows 上提交时很容易），远端就是 exit 126
+      # 「Permission denied」—— 报得又晚又看不出是权限问题。
       # 不用第三方 ssh action：这一步只有二十行，自己写免掉一层供应链
       - name: 装 SSH 私钥
         run: |
@@ -56,7 +59,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_ed25519 -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=yes \
               "${SSH_USER:-root}@$SSH_HOST" \
-              "cd ${APP_DIR:-/opt/jbs-hotsearch} && git pull --ff-only && ./deploy/server-deploy.sh docker update"
+              "cd ${APP_DIR:-/opt/jbs-hotsearch} && git pull --ff-only && bash deploy/server-deploy.sh docker update"
 
       # 只确认「服务活着并应答」，不把「今天还没出榜」判成部署失败：
       # 200 = 今天已出榜；503 = 今天没出榜（可能只是没到点），两者都说明大盘是活的。
