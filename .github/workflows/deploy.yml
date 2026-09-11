@@ -1,13 +1,18 @@
+# 部署只能由「CI 跑绿」或「手动点」触发，用 workflow_run 而不是 push。
+#
+# 前置条件（其余什么都不用配）：
+#   Secrets : SSH_HOST=101.34.58.31   SSH_USER=ubuntu   SSH_PORT=22   SSH_PRIVATE_KEY=<部署私钥>
+#   可选变量: APP_DIR（默认 /opt/jbs-hotsearch）
+#   服务器  : /opt/jbs-hotsearch 是 git clone，且能对 GitHub fetch
+#             （仓库 public，服务器 ~/.ssh/config 里配了 jbs_deploy 部署密钥）
 name: 部署
 
 on:
-  # 只在 CI 跑绿之后部署，用 workflow_run 而不是 push，
-  # 就是为了让「检查没过就不上线」成为硬约束。
   workflow_run:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
-  # 也支持手动点：Actions → Deploy → Run workflow
+  # 也支持手动点：Actions → 部署 → Run workflow
   workflow_dispatch:
 
 concurrency:
@@ -31,6 +36,9 @@ jobs:
           missing=0
           [ -n "$SSH_PRIVATE_KEY" ] || { echo "::error::缺 Secret：SSH_PRIVATE_KEY"; missing=1; }
           [ -n "$SSH_HOST" ]        || { echo "::error::缺 Secret：SSH_HOST"; missing=1; }
+          # SSH_USER 必须显式给：下面的回退默认是 root，而本项目的服务器是 ubuntu，
+          # 漏配会一路走到「Permission denied」才报错，不如在这里直接拦下。
+          [ -n "$SSH_USER" ]        || { echo "::error::缺 Secret：SSH_USER（本项目填 ubuntu）"; missing=1; }
           if [ "$missing" -ne 0 ]; then
             echo "::error::去 Settings → Secrets and variables → Actions 配上再跑"
             exit 1

@@ -9,6 +9,10 @@ data/*.db
 # 抓包文件含 usertoken / sign（凭证），不进公开仓库；部署时用 scp 单独传
 data/*.txt
 .env
+# 轮换凭据时产生的备份（内容就是 .env / compose 原文，含密钥）
+*.bak.*
+# 大盘的 htpasswd：只在服务器上生成，不进仓库
+deploy/nginx-watch.htpasswd
 .workbuddy/
 __pycache__/
 *.py[cod]
