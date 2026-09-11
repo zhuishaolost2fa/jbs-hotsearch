@@ -8,11 +8,15 @@ services:
     environment:
       TZ: Asia/Shanghai
       HS_DATA_DIR: /app/data
-      HS_SOURCE_MIQUAN_CURLS_FILE: /app/data/miquan_curls.txt
+      # 抓包凭据优先从挂载的 /app/creds 读；该目录由下面的 HS_CREDS_DIR 变量决定
+      HS_SOURCE_MIQUAN_CURLS_FILE: /app/creds/miquan_curls.txt
     env_file: .env
     volumes:
-      # 左换成服务器上的绝对路径也行；data/ 里的 miquan_curls.txt 是必需输入，不要删
       - ./data:/app/data
+      # 抓包凭据是可再生但易丢的敏感输入（含 usertoken+sign），放仓库外避免被
+      # git 操作误删（git clean -fdx 会删掉 gitignore 的 data/*.txt）。
+      # 服务器在 .env 里设 HS_CREDS_DIR=/opt/jbs-hotsearch-creds；本地默认 ./data。
+      - ${HS_CREDS_DIR:-./data}:/app/creds:ro
     logging:
       driver: json-file
       options:
