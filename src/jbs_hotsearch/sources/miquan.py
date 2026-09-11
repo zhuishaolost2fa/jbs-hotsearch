@@ -10,10 +10,12 @@
 一行一条追加到 MIQUAN_CURLS_FILE 即可，代码不用改。
 
 字段口径（2026-09-11 实测核实，之前搞反过，别再改回去）：
-  - `recommendNum`（0~100）是**玩家评分 × 10**，和谜圈 App 上看到的分数一致。
+  - `recommendNum`（0~100）**且非 0 时**是**玩家评分 × 10**，和谜圈 App 上看到的分数一致。
     核验：鬼河怒放 90 → 9.0（谜圈 9.0）、王不见王 87 → 8.7（谜圈 8.8）、
     1/2世界推理法则 87 → 8.7（谜圈 8.4）。另有红豆 91/9.1、南墙 85/8.5 等
     一批本与 scriptScore 完全相等，可互相印证。
+    ⚠️ 但它**覆盖不全**（实测 520 本里 104 本返回 0），只取它会让这批本评分变空，
+    所以 item_to_candidate 里缺失时回退 scriptScore，并用 rating_source 标明来源。
   - `scriptScore`（0~10）**不是口碑分**，是平台综合推荐分：对设定系/硬核本
     被系统性压低约 3 分（「设定」标签 74 本均值 5.69、99% 低于 7 分），
     幻方馆谋杀奇境甚至出现 8.4 分对 2.9 分。两者相关系数仅 0.172。
@@ -113,10 +115,17 @@ def item_to_candidate(item: dict, weight: float) -> ScriptCandidate | None:
     if not title:
         return None
     tags = [t.strip() for t in (item.get("scriptTag") or "").split("@") if t.strip()]
-    # recommendNum 是评分 × 10；scriptScore 是平台综合推荐分（不是口碑分，见模块 docstring）
+    # 评分取值：recommendNum 优先（真实口碑），缺失时回退 scriptScore。
+    # recommendNum 覆盖不全（实测 520 本里有 104 本为 0），而 scriptScore 几乎全覆盖，
+    # 只取前者会让一批剧本评分变空；用 signals.rating_source 标明来源便于事后核对。
     rating_raw = float(item.get("recommendNum") or 0)
     platform_score = float(item.get("scriptScore") or 0)
-    rating = rating_raw / 10.0 if rating_raw else None
+    if rating_raw > 0:
+        rating, rating_source = rating_raw / 10.0, "recommendNum"
+    elif platform_score > 0:
+        rating, rating_source = platform_score, "scriptScore"
+    else:
+        rating, rating_source = None, None
     return ScriptCandidate(
         title=title,
         source="miquan",
@@ -127,6 +136,7 @@ def item_to_candidate(item: dict, weight: float) -> ScriptCandidate | None:
         rating=rating,
         signals={
             "rating": rating,
+            "rating_source": rating_source,
             "platform_score": platform_score,
             "difficulty": item.get("scriptDifficultyDegreeName"),
             "script_id": str(item.get("scriptId") or ""),
