@@ -23,6 +23,9 @@ jobs:
   deploy:
     name: 服务器重建容器
     runs-on: ubuntu-latest
+    # 必须设上限：跨境 SSH 被静默掐断时，客户端收不到 RST，这一步会一直「进行中」
+    # 直到默认的 6 小时任务超时。给 30 分钟，够一次构建，也够早失败。
+    timeout-minutes: 30
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -57,7 +60,11 @@ jobs:
 
       - name: git pull + 重建容器
         run: |
+          # ServerAliveInterval 必须给：构建那一层要跑好几分钟，链路中间任何一层
+          # NAT 看它「静默」就会把长连接掐掉，构建被 SIGHUP 一起杀掉，
+          # 表现为 Actions 里这一步无限挂起（连接已死，但客户端收不到 RST）。
           ssh -i ~/.ssh/id_ed25519 -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
               "${SSH_USER:-root}@$SSH_HOST" \
               "cd ${APP_DIR:-/opt/jbs-hotsearch} && git pull --ff-only && bash deploy/server-deploy.sh docker update"
 
@@ -66,6 +73,7 @@ jobs:
       - name: 部署后探活
         run: |
           code=$(ssh -i ~/.ssh/id_ed25519 -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=yes \
+                 -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
                  "${SSH_USER:-root}@$SSH_HOST" \
                  'curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:8787/healthz' \
                  || echo "000")

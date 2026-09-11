@@ -1,6 +1,15 @@
 # 每日热门榜服务：单进程常驻，内置调度（每天 HS_RUN_AT 触发）
 FROM python:3.12-slim
 
+# deb.debian.org 在国内直连极慢：实测单包 20~30 秒，光 `playwright install --with-deps`
+# 这一层就要跑一小时以上（构建中途还会因为长连接被掐断而前功尽弃）。
+# 默认切到腾讯云镜像；境外构建时用 --build-arg APT_MIRROR=deb.debian.org 还原。
+# 注意改的是镜像内的文件，所以后面 `playwright install --with-deps` 的 apt 也一起受益。
+ARG APT_MIRROR=mirrors.cloud.tencent.com
+RUN set -eux; \
+    sed -i "s#//deb.debian.org#//${APT_MIRROR}#g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    sed -i "s#//deb.debian.org#//${APT_MIRROR}#g" /etc/apt/sources.list 2>/dev/null || true
+
 # python:slim 不带 tzdata —— 没有它 zoneinfo("Asia/Shanghai") 直接抛错，
 # 服务会被 tz_util 兜底成固定 +08:00（能用但无法感知夏令时以外的任何时区配置），这里补上。
 RUN apt-get update \

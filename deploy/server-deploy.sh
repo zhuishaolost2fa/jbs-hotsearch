@@ -49,7 +49,13 @@ docker_init() {
 docker_update() {
   need_env
   local DC; DC="$(compose_cmd)"
-  $DC build --pull
+  # 刻意不用 `--pull`：
+  # 1) 服务器访问不了 Docker Hub（registry-1.docker.io 直接超时，国内机器常态），
+  #    `--pull` 会先卡在回源拉基础镜像上，几分钟后连接超时，构建一起被杀；
+  # 2) 它会重新解析基础镜像 digest，digest 一变整条缓存链失效，
+  #    `playwright install --with-deps chromium` 那层要重跑十几分钟。
+  # 基础镜像真的要更新时手动 `docker compose build --pull` 一次即可。
+  $DC build
   $DC up -d
   $DC ps
 }
