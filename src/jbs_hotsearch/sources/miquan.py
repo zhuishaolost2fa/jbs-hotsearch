@@ -9,7 +9,16 @@
 **怎么扩容**：在米圈 App 里翻到想抓的页，Charles 导出 N 条 curl，
 一行一条追加到 MIQUAN_CURLS_FILE 即可，代码不用改。
 
-热度口径：recommendNum（0~100 的平台热度，随请求实时刷新）+ scriptScore（评分，0~10）。
+字段口径（2026-09-11 实测核实，之前搞反过，别再改回去）：
+  - `recommendNum`（0~100）是**玩家评分 × 10**，和谜圈 App 上看到的分数一致。
+    核验：鬼河怒放 90 → 9.0（谜圈 9.0）、王不见王 87 → 8.7（谜圈 8.8）、
+    1/2世界推理法则 87 → 8.7（谜圈 8.4）。另有红豆 91/9.1、南墙 85/8.5 等
+    一批本与 scriptScore 完全相等，可互相印证。
+  - `scriptScore`（0~10）**不是口碑分**，是平台综合推荐分：对设定系/硬核本
+    被系统性压低约 3 分（「设定」标签 74 本均值 5.69、99% 低于 7 分），
+    幻方馆谋杀奇境甚至出现 8.4 分对 2.9 分。两者相关系数仅 0.172。
+  - 该接口**没有任何热度字段**，所以 miquan 只贡献「评分 + 元数据」，
+    热度完全由拼场源（miquan_group）的组局数提供。
 """
 from __future__ import annotations
 
@@ -104,8 +113,10 @@ def item_to_candidate(item: dict, weight: float) -> ScriptCandidate | None:
     if not title:
         return None
     tags = [t.strip() for t in (item.get("scriptTag") or "").split("@") if t.strip()]
-    heat = float(item.get("recommendNum") or 0)
-    score = float(item.get("scriptScore") or 0)
+    # recommendNum 是评分 × 10；scriptScore 是平台综合推荐分（不是口碑分，见模块 docstring）
+    rating_raw = float(item.get("recommendNum") or 0)
+    platform_score = float(item.get("scriptScore") or 0)
+    rating = rating_raw / 10.0 if rating_raw else None
     return ScriptCandidate(
         title=title,
         source="miquan",
@@ -113,11 +124,10 @@ def item_to_candidate(item: dict, weight: float) -> ScriptCandidate | None:
         tags=tags,
         players=_players(item),
         duration=_duration(item),
-        rating=score if score else None,
-        # heat 用于主归一化，score 作为质量修正
+        rating=rating,
         signals={
-            "heat": heat,
-            "score": score,
+            "rating": rating,
+            "platform_score": platform_score,
             "difficulty": item.get("scriptDifficultyDegreeName"),
             "script_id": str(item.get("scriptId") or ""),
         },
@@ -189,13 +199,11 @@ class MiquanSource(Source):
             if cand:
                 candidates.append(cand)
 
-        # 热度用**绝对值**而不是「除以当天最大值」：
-        #   - 跨天可比 —— 今天的 91 和昨天的 91 是同一个意思（昨天的高分不会因为今天全员虚高而掉下去）；
-        #   - recommendNum 本身就是 0~100 的平台热度值，天然可直接用。
-        # 构成：0.75 × 平台热度/100 + 0.25 × 评分/10，避免「高分冷门本」霸榜。
+        # 这个接口没有热度字段，value 只能归一化评分（绝对值口径，跨天可比）。
+        # 默认 miquan 走 metadata 模式（config.miquan_as_metadata → weight=0），
+        # 这个 value 不参与热度打分，只作为展示/兜底用的相对质量值。
         for c in candidates:
-            heat = max(0.0, min(100.0, float(c.signals.get("heat") or 0))) / 100.0
-            score = max(0.0, min(10.0, float(c.signals.get("score") or 0))) / 10.0
-            c.signals["raw_value"] = 0.75 * heat + 0.25 * score
-            c.value = max(0.0, min(1.0, c.signals["raw_value"]))
+            rating = max(0.0, min(10.0, float(c.signals.get("rating") or 0))) / 10.0
+            c.signals["raw_value"] = rating
+            c.value = max(0.0, min(1.0, rating))
         return candidates
