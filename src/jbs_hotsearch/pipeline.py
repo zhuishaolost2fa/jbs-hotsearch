@@ -40,12 +40,8 @@ def _reason(item: RankedScript) -> str:
                 parts.append(f"{span} {shops} 家店开 {groups} 场组局")
             else:
                 parts.append(f"{span} {shops} 家店开组局")
-    mq = item.source_detail.get("miquan")
-    if mq:
-        # 剧本榜降为元数据后，评分仅作质量参考，不再把「平台热度」当作上榜理由
-        score = mq.get("score")
-        if score:
-            parts.append(f"评分 {score}")
+    # 评分不再塞进 reason：榜单卡片会在热度旁单独展示 rating，
+    # 这里再说一遍就重复了（展示逻辑见 site.py 的 _item_card）。
     web = item.source_detail.get("search_llm")
     if web:
         count = web.get("evidence_count")

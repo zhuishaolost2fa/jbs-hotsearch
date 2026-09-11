@@ -66,7 +66,7 @@ def _rank_class(rank: int) -> str:
 
 
 def _meta_bits(item) -> list[str]:
-    """人数 / 时长等元信息行（评分已在 reason 里体现，不重复展示）。"""
+    """人数 / 时长等元信息行（评分已在热度行右侧单独展示，这里不重复）。"""
     bits: list[str] = []
     players = item.get("players")
     if players:
@@ -90,6 +90,10 @@ def _item_card(item) -> str:
     title = _escape(item.get("title"))
     score = item.get("hot_score")
     score_s = f"{score:.0f}" if score is not None else "—"
+    # 评分单独成块放在热度右侧：它是玩家口碑，和「热度」是不同的口径，
+    # 混在 reason 那句灰色小字里既显眼度不够、又容易和有新手科普性的理由重复。
+    rating = item.get("rating")
+    rating_s = f'<span class="rating">评分 {float(rating):g}</span>' if rating else ""
     reason = _escape(item.get("reason") or "")
     meta = "".join(_meta_bits(item))
     return f"""
@@ -100,7 +104,7 @@ def _item_card(item) -> str:
           <h2 class="title">{title}</h2>
           {_badge(item)}
         </div>
-        <div class="score">{score_s}<span class="unit">热度</span></div>
+        <div class="score">{score_s}<span class="unit">热度</span>{rating_s}</div>
         {('<div class="reason">' + reason + '</div>') if reason else ""}
         {('<div class="metas">' + meta + '</div>') if meta else ""}
         {_tags(item)}
@@ -242,6 +246,12 @@ body {{
   margin: 6px 0 4px;
 }}
 .score .unit {{ font-size: 12px; font-weight: 500; color: var(--muted); }}
+.score .rating {{
+  margin-left: auto; align-self: center; white-space: nowrap;
+  font-size: 13px; font-weight: 600; color: #8a5a24;
+  background: #fbf1de; border: 1px solid #f0dcbb;
+  padding: 3px 10px; border-radius: 20px;
+}}
 .reason {{ font-size: 13px; color: #5b554a; margin-top: 2px; }}
 .metas {{ display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; font-size: 13px; color: var(--muted); }}
 .meta {{ display: inline-flex; align-items: center; gap: 6px; }}
