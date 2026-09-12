@@ -8,6 +8,7 @@
     GET /healthz                今天出榜成功 → 200，否则 503（可直接拿去做容器健康检查）
     GET /reviews/               评论聚合列表页（from data/reviews/*.html）
     GET /reviews/<file>         评论聚合某本的页面或配套文案（鬼河怒放.html / .txt）
+    GET /reviews/<file>/poster  某本的海报截图页（鬼河怒放.html/poster -> 鬼河怒放.poster.html）
 """
 from __future__ import annotations
 
@@ -112,13 +113,16 @@ def _reviews_dir(cfg: Config) -> Path:
 
 
 def _list_reviews(reviews_dir: Path) -> list[dict[str, Any]]:
-    """扫 reviews 目录：返回每本（*.html 一项，附同名 *.txt 是否存在）。"""
+    """扫 reviews 目录：返回每本（*.html 一项，附同名 *.txt 文案内容）。"""
     out: list[dict[str, Any]] = []
     if not reviews_dir.is_dir():
         return out
     for html_path in sorted(reviews_dir.glob("*.html")):
+        if html_path.name.endswith(".poster.html"):
+            continue  # 海报页是详情页的附属，不在列表里单独展示
         title = html_path.stem  # 例: 鬼河怒放
         txt_path = reviews_dir / f"{title}.txt"
+        poster_path = reviews_dir / f"{title}.poster.html"
         try:
             stat = html_path.stat()
             size = stat.st_size
@@ -137,10 +141,18 @@ def _list_reviews(reviews_dir: Path) -> list[dict[str, Any]]:
             text = _re.sub(r"<[^>]+>", " ", tail)
             text = _re.sub(r"\s+", " ", text).strip()
             summary = text[:140]
+        caption = ""
+        if txt_path.is_file():
+            try:
+                caption = txt_path.read_text(encoding="utf-8", errors="ignore")[:2000]
+            except OSError:
+                caption = ""
         out.append({
             "title": title,
             "html": html_path.name,
             "txt": txt_path.name if txt_path.is_file() else None,
+            "poster": poster_path.name if poster_path.is_file() else None,
+            "caption": caption,
             "mtime": mtime,
             "size": size,
             "summary": summary,
@@ -170,10 +182,11 @@ nav.top a { color:var(--brand); text-decoration:none; }
 .row .meta { font-size:12px; color:var(--muted); margin-top:2px; }
 .row .summary { font-size:12px; color:#5b554a; margin-top:6px; line-height:1.5; }
 .row .acts { margin-left:auto; display:flex; flex-direction:column; gap:6px; flex-shrink:0; }
-.row .acts a { font-size:12px; padding:5px 11px; border-radius:20px; text-decoration:none;
+.row .acts a, .row .acts button { font-size:12px; padding:5px 11px; border-radius:20px; text-decoration:none;
   background:#fff5ee; border:1px solid #f9d9c5; color:var(--brand); font-weight:600;
-  text-align:center; white-space:nowrap; }
+  text-align:center; white-space:nowrap; cursor:pointer; }
 .row .acts a.txt { background:#f3f0e9; border-color:#e4e0d6; color:#6b6255; }
+.row .acts button { background:var(--brand); border-color:var(--brand); color:#fff; }
 .empty { background:var(--card); border:1px dashed var(--line); border-radius:14px;
   padding:40px 20px; text-align:center; color:var(--muted); }
 .empty b { display:block; color:var(--ink); font-size:16px; margin-bottom:6px; }
@@ -198,10 +211,16 @@ def _render_reviews_index(rows: list[dict[str, Any]]) -> str:
             acts = (
                 f'<a href="/reviews/{urllib.parse.quote(r["html"])}" target="_blank" rel="noopener">打开页面</a>'
             )
-            if r["txt"]:
+            if r["caption"]:
+                caption_attr = html.escape(r["caption"]).replace("\n", "&#10;").replace("\r", "")
                 acts += (
-                    f'<a class="txt" href="/reviews/{urllib.parse.quote(r["txt"])}" '
-                    f'download>下载文案</a>'
+                    f'<button type="button" class="copy-btn" data-caption="{caption_attr}" '
+                    f'onclick="copyRowCaption(this)">复制文案</button>'
+                )
+            if r["poster"]:
+                acts += (
+                    f'<a class="txt" href="/reviews/{urllib.parse.quote(r["poster"])}" '
+                    f'target="_blank" rel="noopener">保存图片</a>'
                 )
             summary = html.escape(r["summary"][:140]) if r["summary"] else ""
             items.append(
@@ -227,7 +246,25 @@ def _render_reviews_index(rows: list[dict[str, Any]]) -> str:
   <nav class="top"><a href="/">← 回到大盘</a></nav>
   {body}
   <div class="foot">gen by jbs-hotsearch · 评论聚合</div>
-</div></body></html>"""
+</div>
+<script>
+function copyRowCaption(btn) {{
+  const text = (btn.getAttribute('data-caption') || '').replace(/&#10;/g, '\n');
+  if (!text) {{ btn.textContent = '暂无'; return; }}
+  const ok = function() {{ btn.textContent = '✓ 已复制'; setTimeout(function(){{ btn.textContent = '复制文案'; }}, 1500); }};
+  const fail = function() {{ btn.textContent = '失败'; setTimeout(function(){{ btn.textContent = '复制文案'; }}, 1500); }};
+  if (navigator.clipboard && navigator.clipboard.writeText) {{
+    navigator.clipboard.writeText(text).then(ok).catch(fail);
+  }} else {{
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try {{ document.execCommand('copy'); ok(); }} catch (e) {{ fail(); }}
+    document.body.removeChild(ta);
+  }}
+}}
+</script>
+</body></html>"""
 
 
 def _resolve_reviews_file(cfg: Config, name: str):
@@ -386,8 +423,8 @@ def _make_handler(cfg: Config, state: _State, refresh: int, reviews_cache: _Revi
                     self._redirect("/reviews/")
                     return
                 if raw_path.startswith("/reviews/"):
-                    name = urllib.parse.unquote(raw_path[len("/reviews/"):], encoding="utf-8")
-                    if not name or name.endswith("/"):
+                    tail = urllib.parse.unquote(raw_path[len("/reviews/"):], encoding="utf-8")
+                    if not tail or tail.endswith("/"):
                         rows = reviews_cache.get(cfg)
                         self._send(
                             200,
@@ -395,7 +432,23 @@ def _make_handler(cfg: Config, state: _State, refresh: int, reviews_cache: _Revi
                             "text/html; charset=utf-8",
                         )
                         return
-                    found = _resolve_reviews_file(cfg, name)
+                    # 海报页：/reviews/<name>.html/poster -> <name>.poster.html
+                    if tail.endswith("/poster"):
+                        base_name = tail[: -len("/poster")]
+                        if base_name.endswith(".html"):
+                            poster_name = f"{Path(base_name).stem}.poster.html"
+                            found = _resolve_reviews_file(cfg, poster_name)
+                            if found and found[0] is not None:
+                                file_path, mime = found
+                                try:
+                                    body = file_path.read_bytes()
+                                except OSError as exc:
+                                    logger.warning("读 reviews 海报失败 %s：%s", file_path, exc)
+                                    self._json(500, {"error": "read failed"})
+                                    return
+                                self._send(200, body, mime)
+                                return
+                    found = _resolve_reviews_file(cfg, tail)
                     if not found or found[0] is None:
                         self._json(404, {"error": "not found", "path": raw_path})
                         return
@@ -446,6 +499,7 @@ def serve(
     print(f"监听大盘已启动：{url}")
     print(f"  JSON    {url}api/status.json")
     print(f"  评论聚合 {url}reviews/")
+    print(f"  海报页   {url}reviews/鬼河怒放.html/poster")
     print(f"  健康位  {url}healthz   （今天出榜成功=200，否则 503）")
     print(f"  窗口 {cfg.watch_days} 天 · 每 {cfg.watch_cache_seconds}s 回源一次 · 页面 {refresh}s 自动刷新")
     print("Ctrl+C 退出")

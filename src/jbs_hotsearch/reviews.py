@@ -296,7 +296,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft
 .hero .brand { font-size: 13px; letter-spacing: 3px; opacity: .82; }
 .hero h1 { font-size: 28px; font-weight: 800; margin: 6px 0 4px; }
 .hero .sub { font-size: 14px; opacity: .9; }
-.hero .meta { font-size: 12px; opacity: .75; margin-top: 4px; }
+.hero .meta { font-size: 12px; opacity: .75; margin-top: 4px; margin-bottom: 12px; }
+.copy-btn { font-size: 13px; padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,.35);
+  background: rgba(255,255,255,.12); color: #fff; cursor: pointer; }
+.copy-btn:active { background: rgba(255,255,255,.22); }
 .summary { display: flex; gap: 12px; margin: 0 0 14px; padding: 14px 16px; background: var(--card);
   border: 1px solid var(--line); border-radius: 14px; }
 .summary > div { flex: 1; }
@@ -305,18 +308,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft
 .section-title { font-size: 14px; font-weight: 700; color: var(--muted); margin: 22px 4px 10px; letter-spacing: 1px; }
 
 .shop { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-  padding: 14px 16px; margin-bottom: 14px; position: relative; }
-.shop-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding-right: 60px; }
+  padding: 14px 16px; margin-bottom: 14px; }
+.shop-row1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .rank { flex: 0 0 26px; height: 26px; border-radius: 8px; background: #cfc8bb; color: #fff;
   display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; }
 .rank-1 { background: linear-gradient(135deg, #f2c14e, #c8961e); }
 .rank-2 { background: linear-gradient(135deg, #c6ccd2, #8d939b); }
 .rank-3 { background: linear-gradient(135deg, #d9a06b, #b0723a); }
-.shop-name { font-size: 18px; font-weight: 700; }
+.score-line { font-size: 12px; color: var(--muted); text-align: right; }
+.score-line b { color: var(--ink); font-weight: 700; font-size: 13px; margin-right: 2px; }
+.shop-name { font-size: 19px; font-weight: 700; line-height: 1.35; margin-bottom: 4px; }
+.shop-dist-row { margin-bottom: 10px; }
 .shop-dist { font-size: 12px; color: var(--muted); padding: 1px 8px; border: 1px solid var(--line); border-radius: 20px; }
-.score-badge { position: absolute; top: 12px; right: 14px; font-size: 12px; color: var(--muted);
-  padding: 3px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
-.score-badge b { color: var(--ink); font-weight: 700; }
+.score-badge { display: none; }
 
 /* 玩家评论摘要：卡片主体 */
 .summary-text { margin: 10px 0 8px; padding: 12px 14px; background: #fff8f1;
@@ -350,12 +354,21 @@ def _fmt_score(v: float) -> str:
     return f"{v:.1f}" if v > 0 else "—"
 
 
+def _fmt_shop_name(name: str, district: str | None) -> str:
+    """如果店名末尾已经带了（区域），且与 shop_district 一致，则截掉避免重复显示。"""
+    if district:
+        suffix = f"（{district}）"
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return name
+
+
 def render_shop_html(
     script_title: str,
     shops: list[ShopStat],
     total_reviews: int,
     with_shop_reviews: int,
-    source_label: str = "米圈 /v13/script/getScriptEvaluateList",
+    caption: str = "",
 ) -> str:
     """店家排行榜 HTML（评论聚合优先，评分降权为角标）。"""
     rows = []
@@ -405,9 +418,9 @@ def render_shop_html(
                 + "".join(snips_parts)
             )
 
-        # 评分角标（右上角，弱化）
-        score_badge = (
-            f'<div class="score-badge"><b>{_fmt_score(s.composite)}</b> '
+        # 评分一行（右上角，弱化）
+        score_line = (
+            f'<div class="score-line"><b>{_fmt_score(s.composite)}</b> '
             f'剧情 {_fmt_score(s.label_means.get("剧情", 0))} · '
             f'推理 {_fmt_score(s.label_means.get("推理", 0))} · '
             f'玩法 {_fmt_score(s.label_means.get("玩法", 0))} · '
@@ -416,12 +429,14 @@ def render_shop_html(
 
         rows.append(f"""
         <article class="shop">
-          <div class="shop-head">
+          <div class="shop-row1">
             <span class="{rank_cls}">{i}</span>
-            <span class="shop-name">{html.escape(s.shop_name)}</span>
+            {score_line}
+          </div>
+          <div class="shop-name">{html.escape(_fmt_shop_name(s.shop_name, s.shop_district))}</div>
+          <div class="shop-dist-row">
             <span class="shop-dist">{html.escape(s.shop_district or "—")}</span>
           </div>
-          {score_badge}
           {summary_html}
           {snips}
           {dms_html}
@@ -429,18 +444,21 @@ def render_shop_html(
 
     excluded = total_reviews - with_shop_reviews
     llm_n = sum(1 for s in shops if s.summary_source == "llm")
+    caption_json = json.dumps(caption, ensure_ascii=False)
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(script_title)} · 店家榜</title>
 <style>{_CSS}</style></head>
 <body>
+<script>window.__CAPTION__ = {caption_json};</script>
 <div class="wrap">
   <header class="hero">
     <div class="brand">JBS · 评论聚合</div>
     <h1>{html.escape(script_title)} · 杭州店家榜</h1>
     <div class="sub">按玩家评论排序 · 评论区含店家的优先</div>
-    <div class="meta">数据源：{html.escape(source_label)} · 共 {total_reviews} 条评论，其中 {with_shop_reviews} 条注明店家（{excluded} 条已排除）</div>
+    <div class="meta">共 {total_reviews} 条评论，其中 {with_shop_reviews} 条注明店家（{excluded} 条已排除）</div>
+    <button class="copy-btn" type="button" onclick="copyCaption(this)">📋 复制文案</button>
   </header>
   <section class="summary">
     <div><b>{len(shops)}</b><span>上榜店家</span></div>
@@ -448,7 +466,147 @@ def render_shop_html(
     <div><b>{llm_n}/{len(shops)}</b><span>AI 摘要覆盖</span></div>
   </section>
   {''.join(rows)}
-  <div class="foot">评分仅作排序参考 · 真实选店请结合玩家原文与点名 DM · JBS 评论聚合</div>
+  <div class="foot">评分仅作排序参考 · 真实选店请结合玩家原文与点名 DM</div>
+</div>
+<script>
+function copyCaption(btn) {{
+  const text = (typeof window !== 'undefined' && window.__CAPTION__) || '';
+  if (!text) {{ btn.textContent = '暂无文案'; return; }}
+  if (navigator.clipboard && navigator.clipboard.writeText) {{
+    navigator.clipboard.writeText(text).then(function() {{
+      const old = btn.textContent;
+      btn.textContent = '✓ 已复制';
+      setTimeout(function() {{ btn.textContent = old; }}, 1500);
+    }}).catch(function() {{ fallbackCopy(text, btn); }});
+  }} else {{
+    fallbackCopy(text, btn);
+  }}
+}}
+function fallbackCopy(text, btn) {{
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try {{ document.execCommand('copy'); btn.textContent = '✓ 已复制'; }}
+  catch (err) {{ btn.textContent = '复制失败'; }}
+  document.body.removeChild(ta);
+  setTimeout(function() {{ btn.textContent = '📋 复制文案'; }}, 1500);
+}}
+</script>
+</body></html>"""
+
+
+def render_poster_html(
+    script_title: str,
+    shops: list[ShopStat],
+    total_reviews: int,
+    with_shop_reviews: int,
+) -> str:
+    """生成「保存图片」专用海报页：白底、固定宽度、无多余信息，方便手机截图。"""
+    rows = []
+    for i, s in enumerate(shops, 1):
+        rank_cls = f"rank rank-{i}" if i <= 3 else "rank"
+        dms_html = ""
+        if s.dms:
+            chips = "".join(
+                f'<span class="dm-chip"><span class="dm-name">{html.escape(d.name)}</span>'
+                f'<span class="dm-n">{d.reviews}条</span></span>'
+                for d in s.dms[:3]
+            )
+            tail = (
+                f'<span class="dms-undm">另 {s.undm_reviews} 条未注明 DM</span>'
+                if s.undm_reviews else ""
+            )
+            dms_html = f'<div class="dms"><span class="dms-label">DM：</span>{chips}{tail}</div>'
+        elif s.undm_reviews:
+            dms_html = (
+                f'<div class="dms"><span class="dms-label">DM：</span>'
+                f'<span class="dms-undm">玩家未点名具体 DM</span></div>'
+            )
+
+        summary_html = (
+            f'<div class="summary-text">'
+            f'<span class="label">玩家评价</span>'
+            f'{html.escape(s.summary)}</div>'
+            if s.summary else ""
+        )
+
+        snips = ""
+        picked = [sr for sr in s.sample_reviews[:3]
+                  if len(sr.get("text", "")) >= 20][:2]
+        if picked:
+            snips_parts = []
+            for sr in picked:
+                txt = html.escape(_truncate_text(sr.get("text", ""), 120))
+                nick = html.escape(sr.get("nick") or "匿名")
+                snips_parts.append(
+                    f'<div class="review-snip"><span class="nick">{nick}：</span>{txt}</div>'
+                )
+            snips = (
+                f'<div class="review-snips-title">原评论摘录</div>'
+                + "".join(snips_parts)
+            )
+
+        score_line = (
+            f'<div class="score-line"><b>{_fmt_score(s.composite)}</b> '
+            f'剧情 {_fmt_score(s.label_means.get("剧情", 0))} · '
+            f'推理 {_fmt_score(s.label_means.get("推理", 0))} · '
+            f'玩法 {_fmt_score(s.label_means.get("玩法", 0))} · '
+            f'{s.reviews} 条</div>'
+        )
+
+        rows.append(f"""
+        <article class="shop">
+          <div class="shop-row1">
+            <span class="{rank_cls}">{i}</span>
+            {score_line}
+          </div>
+          <div class="shop-name">{html.escape(_fmt_shop_name(s.shop_name, s.shop_district))}</div>
+          <div class="shop-dist-row">
+            <span class="shop-dist">{html.escape(s.shop_district or "—")}</span>
+          </div>
+          {summary_html}
+          {snips}
+          {dms_html}
+        </article>""")
+
+    excluded = total_reviews - with_shop_reviews
+    llm_n = sum(1 for s in shops if s.summary_source == "llm")
+    poster_css = f"""
+{_CSS}
+body {{ background: #fff; padding: 0; }}
+.wrap {{ max-width: 375px; margin: 0 auto; padding: 18px 16px 28px; background: #fff; }}
+.hero {{ background: #fff; color: var(--ink); border-radius: 0; padding: 0 0 14px; margin: 0 0 14px;
+  border-bottom: 2px solid var(--line); }}
+.hero .brand {{ color: var(--brand); opacity: 1; }}
+.hero h1 {{ font-size: 22px; color: var(--ink); }}
+.hero .sub {{ color: var(--muted); opacity: 1; }}
+.hero .meta {{ color: var(--muted); opacity: 1; }}
+.copy-btn {{ display: none; }}
+.section-title {{ margin-top: 14px; }}
+.foot {{ display: none; }}
+"""
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(script_title)} · 店家榜海报</title>
+<style>{poster_css}</style></head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="brand">JBS · 评论聚合</div>
+    <h1>{html.escape(script_title)} · 杭州店家榜</h1>
+    <div class="sub">按玩家评论排序 · 评论区含店家的优先</div>
+    <div class="meta">共 {total_reviews} 条评论，其中 {with_shop_reviews} 条注明店家（{excluded} 条已排除）</div>
+  </header>
+  <section class="summary">
+    <div><b>{len(shops)}</b><span>上榜店家</span></div>
+    <div><b>{with_shop_reviews}</b><span>有效评论</span></div>
+    <div><b>{llm_n}/{len(shops)}</b><span>AI 摘要覆盖</span></div>
+  </section>
+  {''.join(rows)}
 </div>
 </body></html>"""
 
@@ -671,17 +829,25 @@ def write_reviews(
     reviews_dir.mkdir(parents=True, exist_ok=True)
 
     key = _script_key(script_title)
-    page_path = reviews_dir / f"{key}.html"
-    page_path.write_text(
-        render_shop_html(script_title, shops, len(all_reviews), len(with_shop)),
-        encoding="utf-8",
-    )
 
     caption, caption_source = _gen_caption(
         cfg, script_title, shops, len(all_reviews), len(all_reviews) - len(with_shop)
     )
+
+    page_path = reviews_dir / f"{key}.html"
+    page_path.write_text(
+        render_shop_html(script_title, shops, len(all_reviews), len(with_shop), caption=caption),
+        encoding="utf-8",
+    )
+
     txt_path = reviews_dir / f"{key}.txt"
     txt_path.write_text(caption, encoding="utf-8")
+
+    poster_path = reviews_dir / f"{key}.poster.html"
+    poster_path.write_text(
+        render_poster_html(script_title, shops, len(all_reviews), len(with_shop)),
+        encoding="utf-8",
+    )
 
     return {
         "script": script_title,
@@ -694,6 +860,7 @@ def write_reviews(
         "shops_with_llm_summary": sum(1 for s in shops if s.summary_source == "llm"),
         "page": str(page_path),
         "caption": str(txt_path),
+        "poster": str(poster_path),
         "caption_source": caption_source,
         "ok": True,
     }
