@@ -23,6 +23,7 @@ import html
 import json
 import logging
 import re
+import urllib.parse
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -498,15 +499,24 @@ function fallbackCopy(text, btn) {{
 </body></html>"""
 
 
-def render_poster_html(
+def render_poster_sheet(
     script_title: str,
     shops: list[ShopStat],
     total_reviews: int,
     with_shop_reviews: int,
+    max_shops: int = 6,
 ) -> str:
-    """生成「保存图片」专用海报页：白底、固定宽度、无多余信息，方便手机截图。"""
+    """生成「截图底稿」：白底、固定宽度、精简内容，专门给 Playwright 截成 PNG。
+
+    这个文件不直接给用户看（列表页会跳过 .sheet.html），只作截图输入。
+
+    为什么要精简（max_shops=6、砍掉评论原文摘录）：
+    小红书图片太长会被平台压缩到看不清，且用户划不动。全量 11 家 + 每家 2 条摘录
+    实测 750x13730（1:18），完全不可用。砍到 Top6 只留一句话摘要后约 1:3，能发。
+    """
     rows = []
-    for i, s in enumerate(shops, 1):
+    shown = shops[:max_shops]
+    for i, s in enumerate(shown, 1):
         rank_cls = f"rank rank-{i}" if i <= 3 else "rank"
         dms_html = ""
         if s.dms:
@@ -526,28 +536,16 @@ def render_poster_html(
                 f'<span class="dms-undm">玩家未点名具体 DM</span></div>'
             )
 
+        # 海报里摘要截断到 70 字：原文 80~120 字，图上放太长会撑爆高度
         summary_html = (
             f'<div class="summary-text">'
             f'<span class="label">玩家评价</span>'
-            f'{html.escape(s.summary)}</div>'
+            f'{html.escape(_truncate_text(s.summary, 70))}</div>'
             if s.summary else ""
         )
 
+        # 海报不放评论原文摘录：每家 2 条 × 120 字，实测会把图撑到 1:18
         snips = ""
-        picked = [sr for sr in s.sample_reviews[:3]
-                  if len(sr.get("text", "")) >= 20][:2]
-        if picked:
-            snips_parts = []
-            for sr in picked:
-                txt = html.escape(_truncate_text(sr.get("text", ""), 120))
-                nick = html.escape(sr.get("nick") or "匿名")
-                snips_parts.append(
-                    f'<div class="review-snip"><span class="nick">{nick}：</span>{txt}</div>'
-                )
-            snips = (
-                f'<div class="review-snips-title">原评论摘录</div>'
-                + "".join(snips_parts)
-            )
 
         score_line = (
             f'<div class="score-line"><b>{_fmt_score(s.composite)}</b> '
@@ -574,6 +572,10 @@ def render_poster_html(
 
     excluded = total_reviews - with_shop_reviews
     llm_n = sum(1 for s in shops if s.summary_source == "llm")
+    foot_text = (
+        f"共 {len(shops)} 家上榜，图里放不下只列 Top {len(shown)} · 完整榜单见网页"
+        if len(shops) > len(shown) else f"共 {len(shops)} 家上榜"
+    )
     poster_css = f"""
 {_CSS}
 body {{ background: #fff; padding: 0; }}
@@ -586,7 +588,7 @@ body {{ background: #fff; padding: 0; }}
 .hero .meta {{ color: var(--muted); opacity: 1; }}
 .copy-btn {{ display: none; }}
 .section-title {{ margin-top: 14px; }}
-.foot {{ display: none; }}
+.foot {{ display: block; margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line); }}
 """
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -607,8 +609,131 @@ body {{ background: #fff; padding: 0; }}
     <div><b>{llm_n}/{len(shops)}</b><span>AI 摘要覆盖</span></div>
   </section>
   {''.join(rows)}
+  <div class="foot">{foot_text}</div>
 </div>
 </body></html>"""
+
+
+# ─────────── 照片页（给用户看的：一张图 + 复制文案） ─────────────
+_PHOTO_CSS = """
+:root { --bg:#f5f3ee; --card:#fff; --ink:#211d18; --muted:#8c8578; --line:#ece7dd; --brand:#e5532b; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg); color:var(--ink); padding:18px 14px 60px; }
+.wrap { max-width:560px; margin:0 auto; }
+.head { font-size:13px; color:var(--muted); margin-bottom:12px; }
+.head a { color:var(--brand); text-decoration:none; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:16px;
+  padding:12px; margin-bottom:14px; }
+.card img { display:block; width:100%; height:auto; border-radius:10px; }
+.tip { text-align:center; color:var(--muted); font-size:12px; margin-top:10px; }
+.acts { display:flex; gap:10px; margin-bottom:14px; }
+.acts button, .acts a { flex:1; font-size:14px; padding:11px 0; border-radius:24px; text-align:center;
+  text-decoration:none; cursor:pointer; font-weight:600; border:1px solid var(--brand); }
+.acts button { background:var(--brand); border-color:var(--brand); color:#fff; }
+.acts a { background:#fff; color:var(--brand); }
+.warn { background:#fff8f1; border:1px dashed #f9d9c5; border-radius:12px; padding:12px 14px;
+  font-size:12px; color:#6b6255; }
+"""
+
+
+def render_photo_html(script_title: str, png_name: str, caption: str, png_ok: bool) -> str:
+    """照片页：展示一张可直接长按保存的 PNG，外加复制文案按钮。"""
+    caption_json = json.dumps(caption, ensure_ascii=False)
+    img_html = (
+        f'<div class="card"><img src="{urllib.parse.quote(png_name)}" '
+        f'alt="{html.escape(script_title)}店家榜"></div>'
+        if png_ok else
+        '<div class="warn">图片还没生成（容器里缺 Playwright 浏览器或截图失败）。'
+        '可以先在下方复制文案。</div>'
+    )
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html.escape(script_title)} · 店家榜图片</title>
+<style>{_PHOTO_CSS}</style></head>
+<body>
+<script>window.__CAPTION__ = {caption_json};</script>
+<div class="wrap">
+  <div class="head"><a href="/reviews/">← 回到店家榜</a></div>
+  <h1 style="font-size:20px;font-weight:800;margin-bottom:12px;">{html.escape(script_title)} · 杭州店家榜</h1>
+  <div class="acts">
+    <button type="button" onclick="copyCaption(this)">📋 复制小红书文案</button>
+    <a href="{urllib.parse.quote(png_name)}" download>⬇️ 下载图片</a>
+  </div>
+  {img_html}
+  <div class="tip">↑ 长按图片即可保存到相册</div>
+</div>
+<script>
+function copyCaption(btn) {{
+  const text = (typeof window !== 'undefined' && window.__CAPTION__) || '';
+  if (!text) {{ btn.textContent = '暂无文案'; return; }}
+  const ok = function() {{ btn.textContent = '✓ 已复制'; setTimeout(function(){{ btn.textContent = '📋 复制小红书文案'; }}, 1500); }};
+  const fail = function() {{ btn.textContent = '复制失败'; setTimeout(function(){{ btn.textContent = '📋 复制小红书文案'; }}, 1500); }};
+  if (navigator.clipboard && navigator.clipboard.writeText) {{
+    navigator.clipboard.writeText(text).then(ok).catch(fail);
+  }} else {{
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try {{ document.execCommand('copy'); ok(); }} catch (err) {{ fail(); }}
+    document.body.removeChild(ta);
+  }}
+}}
+</script>
+</body></html>"""
+
+
+def _screenshot_poster(
+    html_path: Path,
+    png_path: Path,
+    width: int = 375,
+    height: int = 900,
+    scale: int = 2,
+) -> bool:
+    """用 Playwright 无头浏览器把底稿 HTML 截成 PNG；高度自适应（只放大不收缩）。
+
+    失败返回 False（缺 Playwright / 浏览器未装 / 渲染异常），调用方降级为「只有文案」。
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        logger.warning("未安装 playwright，跳过海报截图")
+        return False
+
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--font-render-hinting=none"]
+            )
+            try:
+                page = browser.new_page(
+                    viewport={"width": width, "height": height}, device_scale_factor=scale
+                )
+                page.goto(html_path.as_uri())
+                page.wait_for_load_state("networkidle")
+                for _ in range(4):  # 内容恒定，一两轮必收敛
+                    real = int(
+                        page.evaluate(
+                            "Math.max(document.body.scrollHeight,"
+                            " document.documentElement.scrollHeight)"
+                        )
+                        or 0
+                    )
+                    real = max(real, height)
+                    if abs(real - height) <= 2:
+                        break
+                    height = real
+                    page.set_viewport_size({"width": width, "height": height})
+                    page.wait_for_load_state("networkidle")
+                page.screenshot(path=str(png_path), full_page=False)
+            finally:
+                browser.close()
+    except Exception as exc:  # noqa: BLE001 - 截图不是主流程，失败不能拖垮出榜
+        logger.warning("海报截图失败：%s", exc)
+        return False
+    return png_path.is_file()
 
 
 # ─────────── 小红书文案 ─────────────────────────────────────────────
@@ -843,9 +968,21 @@ def write_reviews(
     txt_path = reviews_dir / f"{key}.txt"
     txt_path.write_text(caption, encoding="utf-8")
 
+    # 1) 截图底稿（纯榜单，白底 375px，只给 Playwright 用）
+    sheet_path = reviews_dir / f"{key}.sheet.html"
+    sheet_path.write_text(
+        render_poster_sheet(script_title, shops, len(all_reviews), len(with_shop)),
+        encoding="utf-8",
+    )
+
+    # 2) 截成 PNG（失败也只是没图，文案照常）
+    png_path = reviews_dir / f"{key}.png"
+    png_ok = _screenshot_poster(sheet_path, png_path)
+
+    # 3) 照片页：一张可长按保存的图 + 复制文案按钮
     poster_path = reviews_dir / f"{key}.poster.html"
     poster_path.write_text(
-        render_poster_html(script_title, shops, len(all_reviews), len(with_shop)),
+        render_photo_html(script_title, png_path.name, caption, png_ok),
         encoding="utf-8",
     )
 
@@ -861,6 +998,7 @@ def write_reviews(
         "page": str(page_path),
         "caption": str(txt_path),
         "poster": str(poster_path),
+        "png": str(png_path) if png_ok else None,
         "caption_source": caption_source,
         "ok": True,
     }

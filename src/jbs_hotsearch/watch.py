@@ -8,7 +8,8 @@
     GET /healthz                今天出榜成功 → 200，否则 503（可直接拿去做容器健康检查）
     GET /reviews/               评论聚合列表页（from data/reviews/*.html）
     GET /reviews/<file>         评论聚合某本的页面或配套文案（鬼河怒放.html / .txt）
-    GET /reviews/<file>/poster  某本的海报截图页（鬼河怒放.html/poster -> 鬼河怒放.poster.html）
+    GET /reviews/<file>/poster  某本的照片页（鬼河怒放.html/poster -> 鬼河怒放.poster.html）
+                                里面是一张可长按保存的 PNG + 复制文案按钮
 """
 from __future__ import annotations
 
@@ -118,8 +119,9 @@ def _list_reviews(reviews_dir: Path) -> list[dict[str, Any]]:
     if not reviews_dir.is_dir():
         return out
     for html_path in sorted(reviews_dir.glob("*.html")):
-        if html_path.name.endswith(".poster.html"):
-            continue  # 海报页是详情页的附属，不在列表里单独展示
+        # 海报页和截图底稿都是详情页的附属，不在列表里单独展示
+        if html_path.name.endswith(".poster.html") or html_path.name.endswith(".sheet.html"):
+            continue
         title = html_path.stem  # 例: 鬼河怒放
         txt_path = reviews_dir / f"{title}.txt"
         poster_path = reviews_dir / f"{title}.poster.html"
@@ -270,11 +272,11 @@ function copyRowCaption(btn) {{
 def _resolve_reviews_file(cfg: Config, name: str):
     """校验文件名后返回 (abs_path, mime)；不安全（穿越 / 非白名单）返回 (None, None)。
 
-    只允许 .html / .txt；解析后的绝对路径必须仍在 reviews 目录下（防 ../ 越权）。
+    允许 .html / .txt / .png；解析后的绝对路径必须仍在 reviews 目录下（防 ../ 越权）。
     """
     if not name or "/" in name or "\\" in name or name.startswith("."):
         return None, None
-    if not (name.endswith(".html") or name.endswith(".txt")):
+    if not (name.endswith(".html") or name.endswith(".txt") or name.endswith(".png")):
         return None, None
     reviews_dir = _reviews_dir(cfg).resolve()
     candidate = (reviews_dir / name).resolve()
@@ -284,7 +286,12 @@ def _resolve_reviews_file(cfg: Config, name: str):
         return None, None
     if not candidate.is_file():
         return None, None
-    mime = "text/html; charset=utf-8" if name.endswith(".html") else "text/plain; charset=utf-8"
+    if name.endswith(".png"):
+        mime = "image/png"
+    elif name.endswith(".html"):
+        mime = "text/html; charset=utf-8"
+    else:
+        mime = "text/plain; charset=utf-8"
     return candidate, mime
 
 
