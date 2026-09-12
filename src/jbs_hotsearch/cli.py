@@ -7,6 +7,7 @@
     python -m jbs_hotsearch doctor    # 环境与权限自检
     python -m jbs_hotsearch board     # 看最近一期本地快照
     python -m jbs_hotsearch social    # 出榜并生成小红书素材（截图 + 文案）
+    python -m jbs_hotsearch reviews   # 从 HAR 评测聚合出店家榜 + 小红书素材
     python -m jbs_hotsearch status    # 终端里看最近 N 天跑没跑成
     python -m jbs_hotsearch watch     # 起监听大盘（Web，含 /healthz 健康检查位）
 """
@@ -137,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jbs-hotsearch", description="剧本杀每日热门榜 Top10")
     parser.add_argument(
         "command",
-        choices=["once", "serve", "preview", "doctor", "board", "social", "status", "watch"],
+        choices=["once", "serve", "preview", "doctor", "board", "social", "reviews", "status", "watch"],
     )
     parser.add_argument("--date", help="指定榜单日期 YYYY-MM-DD（默认今天）")
     parser.add_argument("--days", type=int, help="status / watch 的回看天数")
@@ -147,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--emit", help="只渲染一份静态文件到该路径，不启动服务")
     parser.add_argument("--json", action="store_true", help="配合 status / --emit 输出 JSON")
     parser.add_argument("--no-open", action="store_true", help="watch 启动时不自动打开浏览器")
+    parser.add_argument("--har", help="reviews 子命令：从米圈导出的 HAR 文件路径")
+    parser.add_argument("--script", help="reviews 子命令：剧本名（用作输出文件名与文案标题）")
+    parser.add_argument("--min-reviews", type=int, default=2, help="reviews 子命令：上榜门槛，默认 2 条评论")
     args = parser.parse_args(argv)
 
     cfg = Config.load()
@@ -207,6 +211,24 @@ def main(argv: list[str] | None = None) -> int:
 
         print(preview(cfg, board_date))
         return 0
+
+    if args.command == "reviews":
+        if not args.har or not args.script:
+            print("--har 与 --script 必填（reviews 子命令：HAR 路径 + 剧本名）", file=sys.stderr)
+            return 2
+        from .reviews import write_reviews
+
+        har = Path(args.har)
+        if not har.is_file():
+            print(f"HAR 文件不存在：{har}", file=sys.stderr)
+            return 1
+        result = write_reviews(cfg, har, args.script, min_reviews=args.min_reviews)
+        print("店家榜已生成：")
+        for k in ("script", "reviews_total", "reviews_with_shop", "shops_ranked", "shops_skipped_low_review"):
+            print(f"  {k:<25} {result[k]}")
+        print(f"  {'page':<25} {result['page']}")
+        print(f"  {'caption':<25} {result['caption']}（来源：{result['caption_source']}）")
+        return 0 if result.get("ok") else 1
 
     if args.command == "serve":
         if board_date:
