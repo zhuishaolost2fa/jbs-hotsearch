@@ -537,10 +537,11 @@ def render_poster_sheet(
             )
 
         # 海报里摘要截断到 70 字：原文 80~120 字，图上放太长会撑爆高度
+        # 同时去掉 emoji（容器无 emoji 字体，会渲染成方框）
         summary_html = (
             f'<div class="summary-text">'
             f'<span class="label">玩家评价</span>'
-            f'{html.escape(_truncate_text(s.summary, 70))}</div>'
+            f'{html.escape(_truncate_text(_strip_emoji(s.summary), 70))}</div>'
             if s.summary else ""
         )
 
@@ -830,6 +831,19 @@ def _truncate_text(text: str, n: int = 200) -> str:
     """清洗评论文本：去多余空白、限制长度。"""
     text = re.sub(r"\s+", " ", text).strip()
     return text if len(text) <= n else text[:n].rstrip() + "…"
+
+
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D\u2705\u274C\u2757\u2B50]"
+)
+
+def _strip_emoji(text: str) -> str:
+    """去掉 emoji / 符号：服务器容器只有 Noto CJK 字体，emoji 会渲染成空心方框。
+
+    摘要本来就是纯文字，emoji 去掉不损失信息；真需要 emoji 氛围的是文案（txt），
+    那个走手机/小红书端渲染，不受容器字体影响。
+    """
+    return _EMOJI_RE.sub("", text)
 
 
 def _summarize_shop_reviews(shop: ShopStat) -> str:
