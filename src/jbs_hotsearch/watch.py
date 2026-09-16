@@ -10,6 +10,8 @@
     GET /reviews/<file>         评论聚合某本的页面或配套文案（鬼河怒放.html / .txt）
     GET /reviews/<file>/poster  某本的照片页（鬼河怒放.html/poster -> 鬼河怒放.poster.html）
                                 里面是一张可长按保存的 PNG + 复制文案按钮
+    GET /weekly/                每周热度周报列表页（from data/weekly/*.html）
+    GET /weekly/<file>          周报页 / 海报 PNG / 文案（.html/.png/.txt，不给 .json）
 """
 from __future__ import annotations
 
@@ -315,6 +317,173 @@ class _ReviewsCache:
             return self.rows
 
 
+# ----------------------------------------------------------------------------
+# 每周周报（weekly）：挂载 data/weekly/*
+# ----------------------------------------------------------------------------
+def _weekly_dir(cfg: Config) -> Path:
+    return cfg.data_dir / "weekly"
+
+
+def _list_weekly(weekly_dir: Path) -> list[dict[str, Any]]:
+    """扫周报目录：*.html 一项（跳过 .sheet.html 底稿），元数据从同名 .json 读。"""
+    out: list[dict[str, Any]] = []
+    if not weekly_dir.is_dir():
+        return out
+    for html_path in sorted(weekly_dir.glob("*.html"), reverse=True):
+        if html_path.name.endswith(".sheet.html"):
+            continue
+        title = html_path.stem  # 例: 2026-09-07（统计周的周一）
+        try:
+            stat = html_path.stat()
+            mtime = stat.st_mtime
+        except OSError:
+            mtime = 0.0
+        meta: dict[str, Any] = {}
+        meta_path = weekly_dir / f"{title}.json"
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                meta = {}
+        caption = ""
+        txt_path = weekly_dir / f"{title}.txt"
+        if txt_path.is_file():
+            try:
+                caption = txt_path.read_text(encoding="utf-8", errors="ignore")[:3000]
+            except OSError:
+                caption = ""
+        png_path = weekly_dir / f"{title}.png"
+        items = meta.get("items") or []
+        out.append({
+            "title": title,
+            "html": html_path.name,
+            "png": png_path.name if png_path.is_file() else None,
+            "range_text": meta.get("range_text") or title,
+            "range_cn": meta.get("range_cn") or "",
+            "iso_week": meta.get("iso_week") or "",
+            "covered_days": meta.get("covered_days"),
+            "unique_scripts": meta.get("unique_scripts"),
+            "top1": (items[0].get("title") if items else None),
+            "caption": caption,
+            "mtime": mtime,
+        })
+    return out
+
+
+_WEEKLY_LIST_CSS = _REVIEWS_LIST_CSS + """
+.row .range { font-size:13px; color:var(--ink); font-weight:600; margin-top:2px; }
+.row .stats { font-size:12px; color:var(--muted); margin-top:2px; }
+.row .stats b { color:var(--brand); }
+"""
+
+
+def _render_weekly_index(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        body = """
+        <div class="empty">
+          <b>暂无周报</b>
+          周报每周一自动生成上一周（周一~周日）的总结。<br>
+          也可以手动跑：<code>python -m jbs_hotsearch weekly</code>
+        </div>"""
+    else:
+        items = []
+        for r in rows:
+            covered = r.get("covered_days")
+            unique = r.get("unique_scripts")
+            top1 = r.get("top1")
+            stats_bits = []
+            if covered is not None:
+                stats_bits.append(f"覆盖 <b>{covered}/7</b> 天")
+            if unique is not None:
+                stats_bits.append(f"<b>{unique}</b> 本上榜")
+            if top1:
+                stats_bits.append(f"周冠军 <b>{html.escape(str(top1))}</b>")
+            stats = " · ".join(stats_bits)
+            acts = (
+                f'<a href="/weekly/{urllib.parse.quote(r["html"])}" target="_blank" '
+                f'rel="noopener">打开周报</a>'
+            )
+            if r["caption"]:
+                caption_attr = html.escape(r["caption"]).replace("\n", "&#10;").replace("\r", "")
+                acts += (
+                    f'<button type="button" class="copy-btn" data-caption="{caption_attr}" '
+                    f'onclick="copyRowCaption(this)">复制文案</button>'
+                )
+            if r["png"]:
+                acts += (
+                    f'<a class="txt" href="/weekly/{urllib.parse.quote(r["png"])}" '
+                    f'target="_blank" rel="noopener">保存图片</a>'
+                )
+            items.append(
+                f'<div class="row"><div class="body">'
+                f'<div class="range">{html.escape(r["range_text"])}'
+                + (f' <span style="font-weight:400;color:var(--muted)">（{html.escape(r["iso_week"])}）</span>' if r["iso_week"] else "")
+                + "</div>"
+                + (f'<div class="stats">{stats}</div>' if stats else "")
+                + f"</div><div class=\"acts\">{acts}</div></div>"
+            )
+        body = "".join(items)
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>热度周报</title>
+<style>{_WEEKLY_LIST_CSS}</style></head>
+<body><div class="wrap">
+  <header class="hero">
+    <div class="brand">JBS · 热度周报</div>
+    <h1>每周热度总结</h1>
+    <div class="sub">统计口径：自然周（周一~周日）· 周均热度 × 上榜天数</div>
+    <div class="meta">每周一 {html.escape("09:30")} 自动生成上一周 · 也可手动跑 weekly 命令</div>
+  </header>
+  <nav class="top"><a href="/">← 回到大盘</a></nav>
+  {body}
+  <div class="foot">gen by jbs-hotsearch · 热度周报</div>
+</div>
+<script>
+function copyRowCaption(btn) {{
+  const text = (btn.getAttribute('data-caption') || '').replace(/&#10;/g, '\n');
+  if (!text) {{ btn.textContent = '暂无'; return; }}
+  const ok = function() {{ btn.textContent = '✓ 已复制'; setTimeout(function(){{ btn.textContent = '复制文案'; }}, 1500); }};
+  const fail = function() {{ btn.textContent = '失败'; setTimeout(function(){{ btn.textContent = '复制文案'; }}, 1500); }};
+  if (navigator.clipboard && navigator.clipboard.writeText) {{
+    navigator.clipboard.writeText(text).then(ok).catch(fail);
+  }} else {{
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try {{ document.execCommand('copy'); ok(); }} catch (e) {{ fail(); }}
+    document.body.removeChild(ta);
+  }}
+}}
+</script>
+</body></html>"""
+
+
+def _resolve_weekly_file(cfg: Config, name: str):
+    """周报文件白名单：.html / .png / .txt（不给 .json，元数据是内部的）。"""
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        return None, None
+    if name.endswith(".sheet.html") or name.endswith(".json"):
+        return None, None
+    if not (name.endswith(".html") or name.endswith(".png") or name.endswith(".txt")):
+        return None, None
+    weekly_dir = _weekly_dir(cfg).resolve()
+    candidate = (weekly_dir / name).resolve()
+    try:
+        candidate.relative_to(weekly_dir)
+    except ValueError:
+        return None, None
+    if not candidate.is_file():
+        return None, None
+    if name.endswith(".png"):
+        mime = "image/png"
+    elif name.endswith(".html"):
+        mime = "text/html; charset=utf-8"
+    else:
+        mime = "text/plain; charset=utf-8"
+    return candidate, mime
+
+
 def _notify(cfg: Config, state: _State, snap: Snapshot) -> None:
     """有必要告警时推一次 webhook（配置了 HS_WATCH_WEBHOOK_URL 才发）。"""
     if not cfg.watch_webhook_url:
@@ -468,6 +637,33 @@ def _make_handler(cfg: Config, state: _State, refresh: int, reviews_cache: _Revi
                         return
                     self._send(200, body, mime)
                     return
+                # /weekly 系列路由（结构同 /reviews，数据来自 data/weekly/）
+                if raw_path == "/weekly":
+                    self._redirect("/weekly/")
+                    return
+                if raw_path.startswith("/weekly/"):
+                    tail = urllib.parse.unquote(raw_path[len("/weekly/"):], encoding="utf-8")
+                    if not tail or tail.endswith("/"):
+                        rows = _list_weekly(_weekly_dir(cfg))
+                        self._send(
+                            200,
+                            _render_weekly_index(rows).encode("utf-8"),
+                            "text/html; charset=utf-8",
+                        )
+                        return
+                    found = _resolve_weekly_file(cfg, tail)
+                    if not found or found[0] is None:
+                        self._json(404, {"error": "not found", "path": raw_path})
+                        return
+                    file_path, mime = found
+                    try:
+                        body = file_path.read_bytes()
+                    except OSError as exc:
+                        logger.warning("读 weekly 文件失败 %s：%s", file_path, exc)
+                        self._json(500, {"error": "read failed"})
+                        return
+                    self._send(200, body, mime)
+                    return
                 if path == "/":
                     snap = _get_snapshot(cfg, state)
                     self._send(200, render(snap, refresh).encode("utf-8"),
@@ -506,6 +702,7 @@ def serve(
     print(f"监听大盘已启动：{url}")
     print(f"  JSON    {url}api/status.json")
     print(f"  评论聚合 {url}reviews/")
+    print(f"  热度周报 {url}weekly/")
     print(f"  海报页   {url}reviews/鬼河怒放.html/poster")
     print(f"  健康位  {url}healthz   （今天出榜成功=200，否则 503）")
     print(f"  窗口 {cfg.watch_days} 天 · 每 {cfg.watch_cache_seconds}s 回源一次 · 页面 {refresh}s 自动刷新")

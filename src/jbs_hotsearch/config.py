@@ -129,6 +129,19 @@ class Config:
     # 探测线上产物的单个请求超时（5 个产物并发探测，总耗时≈这一个值）
     watch_http_timeout: float = 6.0
 
+    # ---- 每周热度周报 ----
+    weekly_enabled: bool = True
+    # 周几跑：1=周一 … 7=周日。默认周一，总结**上一个完整周**（周一~周日）
+    weekly_day: int = 1
+    weekly_at: str = "09:30"
+    # 统计哪一周：1=上一个完整周（默认，避免半周数据），0=本周至今
+    weekly_weeks_ago: int = 1
+    # 周报功能启用日（YYYY-MM-DD，默认空 = 自动取本周一）：启用之前的周不判「缺跑」，
+    # 否则大盘会拿上线前的历史周误报红色
+    weekly_since: str = ""
+    # 大盘里回看几周的周报产物
+    weekly_lookback_weeks: int = 4
+
     # ---- 小红书素材（海报截图 + LLM 文案）----
     social_enabled: bool = True
     social_poster_width: int = 1080
@@ -212,6 +225,12 @@ class Config:
             watch_seo_enabled=_get_bool("HS_WATCH_SEO_ENABLED", True),
             watch_stuck_hours=_get_int("HS_WATCH_STUCK_HOURS", 2),
             watch_http_timeout=_get_float("HS_WATCH_HTTP_TIMEOUT", 10.0),
+            weekly_enabled=_get_bool("HS_WEEKLY_ENABLED", True),
+            weekly_day=_get_int("HS_WEEKLY_DAY", 1),
+            weekly_at=_get("HS_WEEKLY_AT", "09:30"),
+            weekly_weeks_ago=_get_int("HS_WEEKLY_WEEKS_AGO", 1),
+            weekly_since=_get("HS_WEEKLY_SINCE"),
+            weekly_lookback_weeks=_get_int("HS_WEEKLY_LOOKBACK_WEEKS", 4),
         )
         # 剧本榜降为元数据：热度完全由拼场决定，剧本榜只提供展示字段。
         # 通过把 miquan 源权重置 0 实现（rank.py 里 weight=0 的源不参与打分）。

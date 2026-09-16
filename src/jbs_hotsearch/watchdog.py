@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -786,6 +786,120 @@ def build_seo_board(cfg: Config, days: int, today: str) -> TaskBoard:
 
 
 # ----------------------------------------------------------------------------
+# 任务四：每周热度周报（每周一跑，看 data/weekly/ 里的产物）
+# ----------------------------------------------------------------------------
+def _weekly_dir(cfg: Config) -> Path:
+    return Path(cfg.data_dir) / "weekly"
+
+
+def _load_weekly_meta(weekly_dir: Path, start: date) -> dict[str, Any] | None:
+    path = weekly_dir / f"{start.isoformat()}.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def build_weekly_board(cfg: Config, today: str, now: datetime, tz) -> TaskBoard:
+    """周报看板：每块 = 一个「统计周」，看那周的产物在不在。
+
+    为什么看产物而不是看运行日志：周报没有独立的运行表，它唯一的留痕就是
+    data/weekly/{周一}.json —— 和 seo_geo 一个思路，但粒度是「周」。
+
+    时间口径：周报在**周一 09:30** 跑，总结的是**上一个完整周**（周一~周日），
+    产物以被统计那一周的周一命名。所以「周一 d 的槽位」期望的产物是 d-7。
+    """
+    board = TaskBoard(
+        key="hotsearch_weekly",
+        name="每周热度周报",
+        kind="weekly",
+        desc="每周一出一次上周（周一~周日）总结：周报页 + 海报 + 小红书文案",
+        plan_at=cfg.weekly_at,
+        grace_minutes=cfg.watch_grace_minutes,
+    )
+    weekly_dir = _weekly_dir(cfg)
+    today_date = datetime.fromisoformat(today).date()
+    this_monday = today_date - timedelta(days=today_date.weekday())
+    # 启用日之前的周不判「缺跑」——那些周功能还没上线，缺周报是正常历史，不是异常
+    since = cfg.weekly_since or this_monday.isoformat()
+
+    try:
+        hour_text, minute_text = (str(cfg.weekly_at).split(":") + ["0"])[:2]
+        slot_hour, slot_minute = int(hour_text), int(minute_text)
+    except ValueError:
+        slot_hour, slot_minute = 9, 30
+
+    weeks = max(1, cfg.weekly_lookback_weeks)
+    for back in range(weeks - 1, -1, -1):
+        slot_monday = this_monday - timedelta(weeks=back)
+        expected_start = slot_monday - timedelta(days=7)  # 这个槽位该产出的那一周
+        meta = _load_weekly_meta(weekly_dir, expected_start)
+        if meta:
+            board.items.append(
+                DayStatus(
+                    date=expected_start.isoformat(),
+                    level=LEVEL_OK,
+                    status="success",
+                    runs=1,
+                    item_count=meta.get("unique_scripts"),
+                    finished_at=_mtime_iso(weekly_dir / f"{expected_start.isoformat()}.json"),
+                    detail=(
+                        f"{meta.get('range_text')} · 覆盖 {meta.get('covered_days')}/7 天"
+                        f" · {meta.get('unique_scripts')} 本上榜"
+                    ),
+                    daily_rows=meta.get("total_rows"),
+                )
+            )
+            continue
+        # 没产物：到点了吗？启用日之前的周记 idle（灰色），不算异常
+        if slot_monday.isoformat() < since:
+            board.items.append(
+                DayStatus(date=expected_start.isoformat(), level=LEVEL_IDLE, status="idle",
+                          detail=f"早于启用日 {since}，那时还没有周报")
+            )
+            continue
+        slot_dt = datetime.combine(
+            slot_monday, datetime.min.time()
+        ).replace(hour=slot_hour, minute=slot_minute, tzinfo=tz)
+        if now < slot_dt + timedelta(minutes=cfg.watch_grace_minutes):
+            level, status, note = LEVEL_PENDING, "pending", "还没到本周周报的计划时间"
+        else:
+            level, status, note = LEVEL_MISSING, "missing", "这一周的周报没生成"
+        board.items.append(
+            DayStatus(date=expected_start.isoformat(), level=level, status=status,
+                      error=None if level == LEVEL_PENDING else note,
+                      detail=note if level == LEVEL_PENDING else None)
+        )
+
+    latest = _latest_weekly_meta(weekly_dir)
+    board.metrics = {
+        "latest_range": latest.get("range_text") if latest else None,
+        "latest_top": (latest.get("items") or [{}])[0].get("title") if latest and latest.get("items") else None,
+        "dir": str(weekly_dir),
+    }
+    return board
+
+
+def _mtime_iso(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+    except OSError:
+        return None
+
+
+def _latest_weekly_meta(weekly_dir: Path) -> dict[str, Any] | None:
+    files = sorted(weekly_dir.glob("*.json"), reverse=True) if weekly_dir.is_dir() else []
+    for path in files:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
+
+
+# ----------------------------------------------------------------------------
 # 组装
 # ----------------------------------------------------------------------------
 def build_snapshot(cfg: Config, days: int = 30, grace_minutes: int = 60) -> Snapshot:
@@ -802,6 +916,8 @@ def build_snapshot(cfg: Config, days: int = 30, grace_minutes: int = 60) -> Snap
         jobs.append(("dm_ingest", build_dm_board, (cfg, days, today, now, tz)))
     if cfg.watch_seo_enabled:
         jobs.append(("seo_geo", build_seo_board, (cfg, days, today)))
+    if cfg.weekly_enabled:
+        jobs.append(("hotsearch_weekly", build_weekly_board, (cfg, today, now, tz)))
 
     if len(jobs) == 1:
         boards = [jobs[0][1](*jobs[0][2])]

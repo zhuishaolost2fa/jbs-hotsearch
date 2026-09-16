@@ -4,6 +4,7 @@ data/reports/
 data/site/
 data/social/
 data/reviews/
+data/weekly/
 # 监听大盘的静态产物（index.html / status.json），里面带错误信息与内部地址
 data/dashboard/
 data/*.db

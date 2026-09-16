@@ -30,6 +30,14 @@ from .watchdog import (
 # PEP 701 放宽到 3.12 才行，而本项目声明支持 3.11）。
 EMPTY = '<span class="note">—</span>'
 
+# 任务类型的中文标签（周报的粒度是「周」不是「天」，别显示成「每天」）
+KIND_LABEL = {
+    "daily": "每天",
+    "ondemand": "按需触发",
+    "weekly": "每周",
+    "asset": "每次部署",
+}
+
 LEVEL_LABEL = {
     LEVEL_OK: "成功",
     LEVEL_WARN: "可疑",
@@ -232,10 +240,16 @@ def _render_rows(board: TaskBoard, snap: Snapshot, tz) -> str:
             if item.error
             else (f'<div class="note">{_esc(item.note)}</div>' if item.note and not item.detail else "")
         )
+        # 周报的一行 = 一个自然周，副标题显示这周的截止日而不是星期几
+        if board.kind == "weekly":
+            week_end = (datetime.fromisoformat(item.date).date() + timedelta(days=6)).isoformat()
+            sub = f"至 {week_end[5:]}"
+        else:
+            sub = f"周{'一二三四五六日'[datetime.fromisoformat(item.date).weekday()]}"
         rows.append(
             "<tr>"
             f"<td>{item.date}"
-            f'<div class="note">周{"一二三四五六日"[datetime.fromisoformat(item.date).weekday()]}</div></td>'
+            f'<div class="note">{sub}</div></td>'
             f"<td>{_pill(item.level)}</td>"
             f'<td class="num">{item.runs or "—"}</td>'
             f'<td class="num">{item.item_count if item.item_count is not None else "—"}'
@@ -346,7 +360,7 @@ def _board_section(board: TaskBoard, snap: Snapshot, tz) -> str:
         parts.append("</section>")
         return "".join(parts)
 
-    kind_label = "每天" if board.kind == "daily" else "按需触发"
+    kind_label = KIND_LABEL.get(board.kind, "按需触发")
     parts.append(
         f'<section><h2>{_esc(board.name)} <span class="tag">{kind_label}</span></h2>'
         f'<p class="h2sub">{_esc(board.desc)}</p>'

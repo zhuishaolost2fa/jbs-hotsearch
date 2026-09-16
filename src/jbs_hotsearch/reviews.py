@@ -32,6 +32,7 @@ from typing import Any
 import httpx
 
 from .config import Config
+from .shot import screenshot_html as _screenshot_poster  # 截图逻辑与 weekly 周报共用
 
 logger = logging.getLogger(__name__)
 
@@ -685,56 +686,6 @@ function copyCaption(btn) {{
 </body></html>"""
 
 
-def _screenshot_poster(
-    html_path: Path,
-    png_path: Path,
-    width: int = 375,
-    height: int = 900,
-    scale: int = 2,
-) -> bool:
-    """用 Playwright 无头浏览器把底稿 HTML 截成 PNG；高度自适应（只放大不收缩）。
-
-    失败返回 False（缺 Playwright / 浏览器未装 / 渲染异常），调用方降级为「只有文案」。
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        logger.warning("未安装 playwright，跳过海报截图")
-        return False
-
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--font-render-hinting=none"]
-            )
-            try:
-                page = browser.new_page(
-                    viewport={"width": width, "height": height}, device_scale_factor=scale
-                )
-                page.goto(html_path.as_uri())
-                page.wait_for_load_state("networkidle")
-                for _ in range(4):  # 内容恒定，一两轮必收敛
-                    real = int(
-                        page.evaluate(
-                            "Math.max(document.body.scrollHeight,"
-                            " document.documentElement.scrollHeight)"
-                        )
-                        or 0
-                    )
-                    real = max(real, height)
-                    if abs(real - height) <= 2:
-                        break
-                    height = real
-                    page.set_viewport_size({"width": width, "height": height})
-                    page.wait_for_load_state("networkidle")
-                page.screenshot(path=str(png_path), full_page=False)
-            finally:
-                browser.close()
-    except Exception as exc:  # noqa: BLE001 - 截图不是主流程，失败不能拖垮出榜
-        logger.warning("海报截图失败：%s", exc)
-        return False
-    return png_path.is_file()
 
 
 # ─────────── 小红书文案 ─────────────────────────────────────────────

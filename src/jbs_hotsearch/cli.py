@@ -60,7 +60,8 @@ def _print_status(cfg: Config, days: int, as_json: bool = False) -> int:
 
     alerted = False
     for board in snap.boards:
-        print(f"\n── {board.name}（{'每天' if board.kind == 'daily' else ('按需' if board.kind == 'ondemand' else '每次部署')}）")
+        kind_cn = {"daily": "每天", "ondemand": "按需", "weekly": "每周"}.get(board.kind, "每次部署")
+        print(f"\n── {board.name}（{kind_cn}）")
         if board.error:
             print(f"   !! {board.error}")
 
@@ -138,7 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jbs-hotsearch", description="剧本杀每日热门榜 Top10")
     parser.add_argument(
         "command",
-        choices=["once", "serve", "preview", "doctor", "board", "social", "reviews", "status", "watch"],
+        choices=["once", "serve", "preview", "doctor", "board", "social", "reviews", "weekly",
+                 "status", "watch"],
     )
     parser.add_argument("--date", help="指定榜单日期 YYYY-MM-DD（默认今天）")
     parser.add_argument("--days", type=int, help="status / watch 的回看天数")
@@ -151,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--har", help="reviews 子命令：从米圈导出的 HAR 文件路径")
     parser.add_argument("--script", help="reviews 子命令：剧本名（用作输出文件名与文案标题）")
     parser.add_argument("--min-reviews", type=int, default=2, help="reviews 子命令：上榜门槛，默认 2 条评论")
+    parser.add_argument("--weeks-ago", type=int,
+                        help="weekly 子命令：统计往前推几周（1=上一个完整周，0=本周至今）")
+    parser.add_argument("--skip-png", action="store_true", help="weekly 子命令：跳过海报截图")
     args = parser.parse_args(argv)
 
     cfg = Config.load()
@@ -230,12 +235,45 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {'caption':<25} {result['caption']}（来源：{result['caption_source']}）")
         return 0 if result.get("ok") else 1
 
+    if args.command == "weekly":
+        from .weekly import write_weekly
+
+        result = write_weekly(
+            cfg,
+            weeks_ago=args.weeks_ago if args.weeks_ago is not None else cfg.weekly_weeks_ago,
+            anchor=board_date,
+            skip_png=args.skip_png,
+        )
+        print(f"周报已生成（{result['range_text']}）：")
+        for k in ("covered_days", "unique_scripts", "total_rows", "ranked", "backend"):
+            print(f"  {k:<18} {result[k]}")
+        print(f"  {'page':<18} {result['page']}")
+        print(f"  {'png':<18} {result['png'] or '（未生成）'}")
+        print(f"  {'caption':<18} {result['caption']}（来源：{result['caption_source']}）")
+        return 0 if result.get("ok") else 2
+
     if args.command == "serve":
         if board_date:
             print("--date 只适用于 once/preview/board", file=sys.stderr)
             return 2
+        weekday_cn = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")[
+            max(0, min(6, cfg.weekly_day - 1))
+        ]
         print(f"常驻模式启动：每天 {cfg.run_at} ({cfg.timezone})，Ctrl+C 退出")
-        serve(cfg, _task)
+        if cfg.weekly_enabled:
+            print(f"  周报：每周{weekday_cn[1:]} {cfg.weekly_at} 出一次上周总结")
+
+        weekly_task = None
+        weekly_due_fn = None
+        if cfg.weekly_enabled:
+            from .weekly import weekly_due, write_weekly
+
+            weekly_task = lambda c: write_weekly(  # noqa: E731 - 只为适配 scheduler 的回调签名
+                c, weeks_ago=c.weekly_weeks_ago
+            )
+            weekly_due_fn = weekly_due
+
+        serve(cfg, _task, weekly_task=weekly_task, weekly_due=weekly_due_fn)
         return 0
 
     return 2
