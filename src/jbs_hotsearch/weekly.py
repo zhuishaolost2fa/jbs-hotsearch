@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-"""每周热度榜周报：把一个自然周的每日榜单聚合成一份「这一周谁最热」的总结。
+"""每周热度榜周报：把一个统计周期的每日榜单聚合成一份「这一周谁最热」的总结。
 
 和每日榜的区别（也是它的价值）：
     每日榜回答「今天谁最热」——受单日组局波动影响大；
     周报回答「这一周谁一直热」——用**上榜天数 × 热度**双维度过滤掉单日噪音。
 
 时间范围口径（用户明确要求「明确的时间范围」）：
-    **ISO 自然周，周一 00:00 ~ 周日 23:59**，默认统计**上一个完整周**。
-    页面上会把起止日期、星期、ISO 周序号、实际有数据的天数全部写出来 ——
+    **上周六 ~ 本周五，7 个自然日**，周五 10:00 出报告（日榜 09:00 跑完）。
+    为什么不是自然周：周报是给「周末去玩」的人看的，周六早上看时周一~周日的口径
+    已经隔了 5 天；截到本周五，读者看到的就是最新一期组局热度。
+    页面上会把起止日期、星期、实际有数据的天数全部写出来 ——
     少了任何一项，读者都无法判断这份总结到底覆盖了哪几天。
 
-产物（都在 data/weekly/，以周起始日命名，如 2026-09-07）：
+产物（都在 data/weekly/，以周期起始日（周六）命名，如 2026-09-12）：
     {start}.html        周报页：时间范围 + 概览 + Top 榜 + 图片 + 复制文案按钮
     {start}.png         周报海报（长按保存 / 发小红书）
     {start}.txt         小红书文案
@@ -41,19 +43,33 @@ WEEKDAY_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周�
 
 
 # ─────────── 时间范围 ──────────────────────────────────────────────
-def week_range(anchor: date, weeks_ago: int = 1) -> tuple[date, date]:
-    """返回以 anchor 所在周为基准、往前推 weeks_ago 周的 (周一, 周日)。
+def period_end(anchor: date, weeks_ago: int = 1) -> date:
+    """周期结束日 = anchor 当天或之前最近的那个**周五**，再往前推 weeks_ago-1 周。
 
-    weeks_ago=1（默认）= 上一个**完整**周：今天无论周几，都不会拿到半周数据。
-    weeks_ago=0 = 本周至今（含今天，可能不满 7 天）。
+    周五是周期的「截止日」：本周五出报告，覆盖到本周五当天那一期日榜。
+    今天周四 → 上一个周五；今天周五 → 今天；今天周六 → 昨天。
     """
-    monday = anchor - timedelta(days=anchor.weekday())
-    start = monday - timedelta(weeks=weeks_ago)
-    return start, start + timedelta(days=6)
+    end = anchor - timedelta(days=(anchor.weekday() - 4) % 7)
+    return end - timedelta(weeks=max(0, weeks_ago - 1))
 
 
-def _iso_week_label(start: date) -> str:
-    iso = start.isocalendar()
+def week_range(anchor: date, weeks_ago: int = 1) -> tuple[date, date]:
+    """返回以 anchor 为基准、往前推 weeks_ago 个周期的 (周六, 周五)，共 7 天。
+
+    weeks_ago=1（默认）= 最近一个**完整**周期：周五当天就是「上周六~本周五」，
+    其余日子跑则退回到上一个已结束的周期，不会拿到半周期数据。
+    """
+    end = period_end(anchor, weeks_ago)
+    return end - timedelta(days=6), end
+
+
+def _iso_week_label(day: date) -> str:
+    """周期标签：以**截止日**所在的 ISO 周为准。
+
+    周期是周六~周五，跨两个 ISO 周（起始的周六属于上一周），
+    所以只能挑一天当代表 —— 用截止日，和「本周」的直觉一致。
+    """
+    iso = day.isocalendar()
     return f"{iso[0]} 年第 {iso[1]} 周"
 
 
@@ -86,7 +102,7 @@ class WeekItem:
     first_rank: int = 0           # 本周首次上榜那天的名次
     last_rank: int = 0            # 本周最后一次的名次
     trend: float = 0.0            # 后半周均热 - 前半周均热（正 = 在升温）
-    is_new: bool = False          # 本周新晋（本周内首次出现）
+    is_new: bool = False          # 本期新晋（本周内首次出现）
     meta: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -136,7 +152,10 @@ class WeeklyReport:
 
     @property
     def range_cn(self) -> str:
-        return f"{self.start.month}月{self.start.day}日（周一）— {self.end.month}月{self.end.day}日（周日）"
+        return (
+            f"{self.start.month}月{self.start.day}日（{WEEKDAY_CN[self.start.weekday()]}）"
+            f"— {self.end.month}月{self.end.day}日（{WEEKDAY_CN[self.end.weekday()]}）"
+        )
 
     @property
     def risers(self) -> list[WeekItem]:
@@ -384,7 +403,7 @@ def _meta_pills(item: WeekItem) -> str:
         else:
             parts.append('<span class="pill">热度平稳</span>')
     if item.is_new:
-        parts.append('<span class="pill new">本周新晋</span>')
+        parts.append('<span class="pill new">本期新晋</span>')
     meta = item.meta or {}
     if meta.get("rating"):
         parts.append(f'<span class="pill">评分 {meta["rating"]}</span>')
@@ -397,7 +416,7 @@ def _meta_pills(item: WeekItem) -> str:
 
 def _render_items(items: list[WeekItem]) -> str:
     if not items:
-        return '<div class="warn">这一周没有任何榜单数据 —— 可能整周都没跑成，去监听大盘确认。</div>'
+        return '<div class="warn">本期没有任何榜单数据 —— 可能整个周期都没跑成，去监听大盘确认。</div>'
     # 进度条按 **排序口径**（heat_index = 周均 × 天数占比）画，不是按周均热度：
     # 否则会出现「周均 68 的本排第 3，进度条却比第 1 名还满」的视觉矛盾。
     top_heat = max((i.heat_index for i in items), default=1.0) or 1.0
@@ -434,14 +453,14 @@ def _render_extra(report: WeeklyReport) -> str:
         chips = "".join(
             f'<span class="chip">{html.escape(i.title)}</span>' for i in newcomers[:6]
         )
-        parts.append(f'<div class="section-title">🆕 本周新晋</div><div class="chips">{chips}</div>')
+        parts.append(f'<div class="section-title">🆕 本期新晋</div><div class="chips">{chips}</div>')
     regulars = report.regulars
     if regulars and len(regulars) < len(report.items):
         chips = "".join(
             f'<span class="chip">{html.escape(i.title)}</span>' for i in regulars[:6]
         )
         parts.append(
-            f'<div class="section-title">🌲 全周在榜（{report.covered_days} 天满勤）</div>'
+            f'<div class="section-title">🌲 全程在榜（{report.covered_days} 天满勤）</div>'
             f'<div class="chips">{chips}</div>'
         )
     return "".join(parts)
@@ -480,21 +499,21 @@ def render_week_html(
     <div class="sub">按「周均热度 × 上榜天数」排序，过滤单日波动</div>
     <div class="range">
       <b>{html.escape(report.range_text)}</b>
-      <span class="wk">{html.escape(report.range_cn)} · {html.escape(_iso_week_label(report.start))}</span>
+      <span class="wk">{html.escape(report.range_cn)} · {html.escape(_iso_week_label(report.end))}</span>
     </div>
     <div><button class="copy-btn" type="button" onclick="copyCaption(this)">📋 复制小红书文案</button></div>
   </header>
   {warn}
   <section class="summary">
-    <div><b>{len(report.items)}</b><span>本周 Top</span></div>
+    <div><b>{len(report.items)}</b><span>本期 Top</span></div>
     <div><b>{report.unique_scripts}</b><span>上榜剧本</span></div>
     <div><b>{report.covered_days}/7</b><span>有效天数</span></div>
   </section>
-  <div class="section-title">🏆 本周热度榜</div>
+  <div class="section-title">🏆 本期热度榜</div>
   {_render_items(report.items)}
   {_render_extra(report)}
   {shot}
-  <div class="foot">统计口径：{html.escape(report.range_text)}（周一至周日）· 数据源 {html.escape(report.backend)}</div>
+  <div class="foot">统计口径：{html.escape(report.range_text)}（周六至周五，7 天）· 数据源 {html.escape(report.backend)}</div>
 </div>
 <script>
 function copyCaption(btn) {{
@@ -531,18 +550,18 @@ def render_week_sheet(report: WeeklyReport) -> str:
     <div class="sub">按「周均热度 × 上榜天数」排序</div>
     <div class="range">
       <b>{html.escape(report.range_text)}</b>
-      <span class="wk">{html.escape(report.range_cn)} · {html.escape(_iso_week_label(report.start))}</span>
+      <span class="wk">{html.escape(report.range_cn)} · {html.escape(_iso_week_label(report.end))}</span>
     </div>
   </header>
   <section class="summary">
-    <div><b>{len(report.items)}</b><span>本周 Top</span></div>
+    <div><b>{len(report.items)}</b><span>本期 Top</span></div>
     <div><b>{report.unique_scripts}</b><span>上榜剧本</span></div>
     <div><b>{report.covered_days}/7</b><span>有效天数</span></div>
   </section>
-  <div class="section-title">🏆 本周热度榜</div>
+  <div class="section-title">🏆 本期热度榜</div>
   {_render_items(report.items)}
   {_render_extra(report)}
-  <div class="foot">统计口径：{html.escape(report.range_text)}（周一至周日）</div>
+  <div class="foot">统计口径：{html.escape(report.range_text)}（周六至周五，7 天）</div>
 </div>
 </body></html>"""
 
@@ -550,7 +569,7 @@ def render_week_sheet(report: WeeklyReport) -> str:
 # ─────────── 文案 ──────────────────────────────────────────────────
 _TEMPLATE_CAPTION = """📅 杭州剧本杀周报 · {range_text}（{range_cn}）
 
-这一周（有效 {covered} 天）最热的几本：
+这一周（有效 {covered} 天）最热的几本，周末想打本可以直接抄作业：
 {lines}
 
 挑本小 tips：
@@ -602,7 +621,8 @@ def gen_caption(cfg: Config, report: WeeklyReport) -> tuple[str, str]:
             top1 = report.items[0]
             prompt = (
                 f"你是小红书剧本杀垂类博主。下面是杭州剧本杀热度榜的**一周总结**：\n"
-                f"统计区间：{report.range_text}（周一至周日），其中 {report.covered_days} 天有数据。\n\n"
+                f"统计区间：{report.range_text}（周六至周五，7 天），其中 {report.covered_days} 天有数据。\n\n"
+                f"这份周报是周五发的，读者要**趁周末去玩**，所以推荐时要有「这周末就能约」的语气。\n\n"
                 f"下面是本周 Top{len(lines)}，**已经按最终排名排好序，第 1 名就是本周第一**：\n"
                 + "\n".join(lines)
                 + "\n\n⚠️ 排序口径是「周均热度 × 上榜天数」，所以**周均热度最高的那个不一定是第一名**"
@@ -684,7 +704,7 @@ def write_weekly(
                 "end": end.isoformat(),
                 "range_text": report.range_text,
                 "range_cn": report.range_cn,
-                "iso_week": _iso_week_label(start),
+                "iso_week": _iso_week_label(end),
                 "covered_days": report.covered_days,
                 "unique_scripts": report.unique_scripts,
                 "total_rows": report.total_rows,
@@ -742,6 +762,15 @@ def weekly_due(cfg: Config, now: datetime | None = None) -> bool:
     slot = _weekly_slot(cfg, now)
     if now < slot:
         return False
-    expected_start = slot.date() - timedelta(days=7)
+    expected_start = slot.date() - timedelta(days=6)  # 周期 = 截止周五往前 6 天（周六）
+    # 启用日之前的周期不补跑：那时还没有「周六~周五」口径的周报，产物天然不存在
+    since = cfg.weekly_since or _fallback_since(now.date())
+    if expected_start.isoformat() < since:
+        return False
     meta = Path(cfg.data_dir) / "weekly" / f"{expected_start.isoformat()}.json"
     return not meta.is_file()
+
+
+def _fallback_since(today: date) -> str:
+    """未配置 weekly_since 时的兜底：只认「本周五截止」这个周期，更早的一概不补跑。"""
+    return (period_end(today, weeks_ago=1) - timedelta(days=6)).isoformat()

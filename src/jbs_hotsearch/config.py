@@ -131,14 +131,15 @@ class Config:
 
     # ---- 每周热度周报 ----
     weekly_enabled: bool = True
-    # 周几跑：1=周一 … 7=周日。默认周一，总结**上一个完整周**（周一~周日）
-    weekly_day: int = 1
-    weekly_at: str = "09:30"
-    # 统计哪一周：1=上一个完整周（默认，避免半周数据），0=本周至今
+    # 周几跑：1=周一 … 7=周日。默认**周五 10:00**：周报是给周末去玩的人看的，
+    # 周五日榜（09:00 跑）出来后就总结「上周六 ~ 本周五」这 7 天
+    weekly_day: int = 5
+    weekly_at: str = "10:00"
+    # 统计哪个周期：1=最近一个完整周期（默认，避免半周期数据）
     weekly_weeks_ago: int = 1
-    # 周报功能启用日（YYYY-MM-DD，默认空 = 自动取本周一）：启用之前的周不判「缺跑」，
-    # 否则大盘会拿上线前的历史周误报红色
-    weekly_since: str = ""
+    # 周六~周五口径的启用日（默认 2026-09-12，即第一期新口径周报的起始日）：
+    # 启用之前的周期不判「缺跑」，否则会拿老口径（周一~周日）的历史周误报红色
+    weekly_since: str = "2026-09-12"
     # 大盘里回看几周的周报产物
     weekly_lookback_weeks: int = 4
 
@@ -226,10 +227,10 @@ class Config:
             watch_stuck_hours=_get_int("HS_WATCH_STUCK_HOURS", 2),
             watch_http_timeout=_get_float("HS_WATCH_HTTP_TIMEOUT", 10.0),
             weekly_enabled=_get_bool("HS_WEEKLY_ENABLED", True),
-            weekly_day=_get_int("HS_WEEKLY_DAY", 1),
-            weekly_at=_get("HS_WEEKLY_AT", "09:30"),
+            weekly_day=_get_int("HS_WEEKLY_DAY", 5),
+            weekly_at=_get("HS_WEEKLY_AT", "10:00"),
             weekly_weeks_ago=_get_int("HS_WEEKLY_WEEKS_AGO", 1),
-            weekly_since=_get("HS_WEEKLY_SINCE"),
+            weekly_since=_get("HS_WEEKLY_SINCE", "2026-09-12"),
             weekly_lookback_weeks=_get_int("HS_WEEKLY_LOOKBACK_WEEKS", 4),
         )
         # 剧本榜降为元数据：热度完全由拼场决定，剧本榜只提供展示字段。

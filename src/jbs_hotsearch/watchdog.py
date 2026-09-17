@@ -786,7 +786,7 @@ def build_seo_board(cfg: Config, days: int, today: str) -> TaskBoard:
 
 
 # ----------------------------------------------------------------------------
-# 任务四：每周热度周报（每周一跑，看 data/weekly/ 里的产物）
+# 任务四：每周热度周报（每周五跑，看 data/weekly/ 里的产物）
 # ----------------------------------------------------------------------------
 def _weekly_dir(cfg: Config) -> Path:
     return Path(cfg.data_dir) / "weekly"
@@ -808,22 +808,23 @@ def build_weekly_board(cfg: Config, today: str, now: datetime, tz) -> TaskBoard:
     为什么看产物而不是看运行日志：周报没有独立的运行表，它唯一的留痕就是
     data/weekly/{周一}.json —— 和 seo_geo 一个思路，但粒度是「周」。
 
-    时间口径：周报在**周一 09:30** 跑，总结的是**上一个完整周**（周一~周日），
-    产物以被统计那一周的周一命名。所以「周一 d 的槽位」期望的产物是 d-7。
+    时间口径：周报在**周五 10:00** 跑，总结的是**上周六 ~ 本周五**这 7 天，
+    产物以周期起始日（周六）命名。所以「周五 d 的槽位」期望的产物是 d-6。
     """
     board = TaskBoard(
         key="hotsearch_weekly",
         name="每周热度周报",
         kind="weekly",
-        desc="每周一出一次上周（周一~周日）总结：周报页 + 海报 + 小红书文案",
+        desc="每周五出一次上周六~本周五总结：周报页 + 海报 + 小红书文案",
         plan_at=cfg.weekly_at,
         grace_minutes=cfg.watch_grace_minutes,
     )
     weekly_dir = _weekly_dir(cfg)
     today_date = datetime.fromisoformat(today).date()
-    this_monday = today_date - timedelta(days=today_date.weekday())
-    # 启用日之前的周不判「缺跑」——那些周功能还没上线，缺周报是正常历史，不是异常
-    since = cfg.weekly_since or this_monday.isoformat()
+    # 本周期截止的那个周五（今天周五就是今天，周六~周四则算下一个周五）
+    this_slot = today_date + timedelta(days=(4 - today_date.weekday()) % 7)
+    # 启用日之前的周期不判「缺跑」——那些周功能还没上线，缺周报是正常历史，不是异常
+    since = cfg.weekly_since or (this_slot - timedelta(days=6)).isoformat()
 
     try:
         hour_text, minute_text = (str(cfg.weekly_at).split(":") + ["0"])[:2]
@@ -833,8 +834,8 @@ def build_weekly_board(cfg: Config, today: str, now: datetime, tz) -> TaskBoard:
 
     weeks = max(1, cfg.weekly_lookback_weeks)
     for back in range(weeks - 1, -1, -1):
-        slot_monday = this_monday - timedelta(weeks=back)
-        expected_start = slot_monday - timedelta(days=7)  # 这个槽位该产出的那一周
+        slot_day = this_slot - timedelta(weeks=back)
+        expected_start = slot_day - timedelta(days=6)  # 这个槽位该产出的那一周期（周六~周五）
         meta = _load_weekly_meta(weekly_dir, expected_start)
         if meta:
             board.items.append(
@@ -854,19 +855,19 @@ def build_weekly_board(cfg: Config, today: str, now: datetime, tz) -> TaskBoard:
             )
             continue
         # 没产物：到点了吗？启用日之前的周记 idle（灰色），不算异常
-        if slot_monday.isoformat() < since:
+        if expected_start.isoformat() < since:
             board.items.append(
                 DayStatus(date=expected_start.isoformat(), level=LEVEL_IDLE, status="idle",
                           detail=f"早于启用日 {since}，那时还没有周报")
             )
             continue
         slot_dt = datetime.combine(
-            slot_monday, datetime.min.time()
+            slot_day, datetime.min.time()
         ).replace(hour=slot_hour, minute=slot_minute, tzinfo=tz)
         if now < slot_dt + timedelta(minutes=cfg.watch_grace_minutes):
-            level, status, note = LEVEL_PENDING, "pending", "还没到本周周报的计划时间"
+            level, status, note = LEVEL_PENDING, "pending", "还没到本周期周报的计划时间"
         else:
-            level, status, note = LEVEL_MISSING, "missing", "这一周的周报没生成"
+            level, status, note = LEVEL_MISSING, "missing", "这一周期（周六~周五）的周报没生成"
         board.items.append(
             DayStatus(date=expected_start.isoformat(), level=level, status=status,
                       error=None if level == LEVEL_PENDING else note,

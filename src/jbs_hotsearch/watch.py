@@ -332,7 +332,7 @@ def _list_weekly(weekly_dir: Path) -> list[dict[str, Any]]:
     for html_path in sorted(weekly_dir.glob("*.html"), reverse=True):
         if html_path.name.endswith(".sheet.html"):
             continue
-        title = html_path.stem  # 例: 2026-09-07（统计周的周一）
+        title = html_path.stem  # 例: 2026-09-12（统计周期的起始日 = 周六）
         try:
             stat = html_path.stat()
             mtime = stat.st_mtime
@@ -382,7 +382,7 @@ def _render_weekly_index(rows: list[dict[str, Any]]) -> str:
         body = """
         <div class="empty">
           <b>暂无周报</b>
-          周报每周一自动生成上一周（周一~周日）的总结。<br>
+          周报每周五自动生成上一周期（周六~周五）的总结。<br>
           也可以手动跑：<code>python -m jbs_hotsearch weekly</code>
         </div>"""
     else:
@@ -432,8 +432,8 @@ def _render_weekly_index(rows: list[dict[str, Any]]) -> str:
   <header class="hero">
     <div class="brand">JBS · 热度周报</div>
     <h1>每周热度总结</h1>
-    <div class="sub">统计口径：自然周（周一~周日）· 周均热度 × 上榜天数</div>
-    <div class="meta">每周一 {html.escape("09:30")} 自动生成上一周 · 也可手动跑 weekly 命令</div>
+    <div class="sub">统计口径：周六 ~ 周五（7 天）· 周均热度 × 上榜天数</div>
+    <div class="meta">每周五 10:00 自动生成上周六~本周五总结 · 也可手动跑 weekly 命令</div>
   </header>
   <nav class="top"><a href="/">← 回到大盘</a></nav>
   {body}

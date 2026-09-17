@@ -240,7 +240,7 @@ def _render_rows(board: TaskBoard, snap: Snapshot, tz) -> str:
             if item.error
             else (f'<div class="note">{_esc(item.note)}</div>' if item.note and not item.detail else "")
         )
-        # 周报的一行 = 一个自然周，副标题显示这周的截止日而不是星期几
+        # 周报的一行 = 一个统计周期（周六~周五），副标题显示截止日而不是星期几
         if board.kind == "weekly":
             week_end = (datetime.fromisoformat(item.date).date() + timedelta(days=6)).isoformat()
             sub = f"至 {week_end[5:]}"

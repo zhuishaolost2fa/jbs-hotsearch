@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--script", help="reviews 子命令：剧本名（用作输出文件名与文案标题）")
     parser.add_argument("--min-reviews", type=int, default=2, help="reviews 子命令：上榜门槛，默认 2 条评论")
     parser.add_argument("--weeks-ago", type=int,
-                        help="weekly 子命令：统计往前推几周（1=上一个完整周，0=本周至今）")
+                        help="weekly 子命令：统计往前推几个周期（1=最近一个完整周六~周五）")
     parser.add_argument("--skip-png", action="store_true", help="weekly 子命令：跳过海报截图")
     args = parser.parse_args(argv)
 
@@ -261,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
         ]
         print(f"常驻模式启动：每天 {cfg.run_at} ({cfg.timezone})，Ctrl+C 退出")
         if cfg.weekly_enabled:
-            print(f"  周报：每周{weekday_cn[1:]} {cfg.weekly_at} 出一次上周总结")
+            print(f"  周报：每周{weekday_cn[1:]} {cfg.weekly_at} 出一次上周六~本周五总结")
 
         weekly_task = None
         weekly_due_fn = None
