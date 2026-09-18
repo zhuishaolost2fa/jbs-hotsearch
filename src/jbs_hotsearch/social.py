@@ -362,14 +362,20 @@ def _render_material_page(
             f"</figure>"
             for i, p in enumerate(png_names, 1)
         )
-        shot = (
-            f'<div class="slices{single}">{imgs}</div>'
-            f'<div class="slice-acts">'
-            f'<button class="slice-btn primary" type="button" '
-            f'onclick="saveAllSlices(this)">⬇️ 一键保存全部（{total} 张）</button>'
-            f'<button class="slice-btn" type="button" onclick="openLb(0)">🔍 逐张预览保存</button>'
-            f"</div>"
-        )
+        if total == 1:
+            # 单张时「一键保存全部（1 张）」听着别扭，也不需要一个专门的预览入口
+            acts = (
+                '<button class="slice-btn primary" type="button" '
+                'onclick="saveAllSlices(this)">⬇️ 保存这张海报</button>'
+                '<button class="slice-btn" type="button" onclick="openLb(0)">🔍 放大预览</button>'
+            )
+        else:
+            acts = (
+                f'<button class="slice-btn primary" type="button" '
+                f'onclick="saveAllSlices(this)">⬇️ 一键保存全部（{total} 张）</button>'
+                f'<button class="slice-btn" type="button" onclick="openLb(0)">🔍 逐张预览保存</button>'
+            )
+        shot = f'<div class="slices{single}">{imgs}</div><div class="slice-acts">{acts}</div>'
         tip = (
             f'共 {total} 张，每张都是 3:4，可直接发小红书；'
             f'点任意一张可放大，长按存进相册。安卓「一键保存」会依次下载，iPhone 请用「逐张预览」长按保存'

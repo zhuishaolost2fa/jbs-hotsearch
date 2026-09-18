@@ -511,17 +511,31 @@ def render_week_html(
             f"</figure>"
             for i, p in enumerate(pngs, 1)
         )
+        total = len(pngs)
+        if total == 1:
+            # 单张时「一键保存全部（1 张）」听着别扭，也不需要一个专门的预览入口
+            acts = (
+                '<button class="slice-btn primary" type="button" id="saveAllBtn" '
+                'onclick="saveAllSlices(this)">⬇️ 保存这张海报</button>'
+                '<button class="slice-btn" type="button" onclick="openLb(0)">🔍 放大预览</button>'
+            )
+        else:
+            acts = (
+                f'<button class="slice-btn primary" type="button" id="saveAllBtn" '
+                f'onclick="saveAllSlices(this)">⬇️ 一键保存全部（{total} 张）</button>'
+                f'<button class="slice-btn" type="button" onclick="openLb(0)">🔍 逐张预览保存</button>'
+            )
+        tip_text = (
+            "点图片可放大，长按存进相册"
+            if total == 1
+            else "点任意一张可放大，长按存进相册；安卓「一键保存」会依次下载，iPhone 请用「逐张预览」长按保存"
+        )
         shot = (
-            f'<div class="section-title">📌 海报切片（共 {len(pngs)} 张 · 每张 3:4）</div>'
+            f'<div class="section-title">📌 海报切片（共 {total} 张 · 每张 3:4）</div>'
             f'<div class="shot">'
             f'<div class="slices{single}">{imgs}</div>'
-            f'<div class="slice-acts">'
-            f'<button class="slice-btn primary" type="button" id="saveAllBtn" '
-            f'onclick="saveAllSlices(this)">⬇️ 一键保存全部（{len(pngs)} 张）</button>'
-            f'<button class="slice-btn" type="button" onclick="openLb(0)">🔍 逐张预览保存</button>'
-            f"</div>"
-            f'<div class="tip">点任意一张可放大，长按存进相册；安卓「一键保存」会依次下载，'
-            f'iPhone 请用「逐张预览」长按保存</div>'
+            f'<div class="slice-acts">{acts}</div>'
+            f'<div class="tip">{tip_text}</div>'
             f"</div>"
         )
     else:
