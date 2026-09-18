@@ -147,7 +147,7 @@ class Config:
     social_enabled: bool = True
     social_poster_width: int = 1080
     social_poster_height: int = 1440
-    social_poster_scale: int = 2
+    social_poster_scale: int = 1
     # 海报底部是否追加「已解析·未入榜」区块（DM 手册已在库、被本轮剔除的剧本）
     social_show_parsed: bool = True
     # 该区块最多展示几本，超出折叠成「等 N 本」
@@ -209,7 +209,7 @@ class Config:
             social_enabled=_get_bool("HS_SOCIAL_ENABLED", True),
             social_poster_width=_get_int("HS_SOCIAL_POSTER_WIDTH", 1080),
             social_poster_height=_get_int("HS_SOCIAL_POSTER_HEIGHT", 1440),
-            social_poster_scale=_get_int("HS_SOCIAL_POSTER_SCALE", 2),
+            social_poster_scale=_get_int("HS_SOCIAL_POSTER_SCALE", 1),
             social_show_parsed=_get_bool("HS_SOCIAL_SHOW_PARSED", True),
             social_parsed_limit=_get_int("HS_SOCIAL_PARSED_LIMIT", 6),
             social_caption_parsed_ratio=_get_float("HS_SOCIAL_CAPTION_PARSED_RATIO", 0.5),

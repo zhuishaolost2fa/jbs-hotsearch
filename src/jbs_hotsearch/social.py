@@ -2,7 +2,7 @@
 """小红书素材生成：3:4 竖版海报截图 + LLM 文案 + 素材页。
 
 产物（每天出榜后自动生成）：
-  data/social/YYYY-MM-DD.png   海报截图（1080×1440，实际 2x = 2160×2880）
+  data/social/YYYY-MM-DD.png   海报截图（1080×1440 标准 3:4；内容多时自动切多张 -2/-3…）
   data/social/YYYY-MM-DD.txt   小红书文案（含话题标签）
   data/social/poster.html      最新一张海报的 HTML（调试/复刻用）
   data/social/index.html       素材页（内嵌最新图 + 文案，手机可存图/复制）
@@ -24,6 +24,7 @@ import httpx
 
 from .config import Config
 from .models import DailyBoard, RankedScript
+from .shot import screenshot_slices as _screenshot_slices
 
 logger = logging.getLogger(__name__)
 
@@ -223,44 +224,6 @@ body {{
 </html>"""
 
 
-def _screenshot_png(html_path: Path, png_path: Path, width: int, height: int, scale: int) -> None:
-    """用 Playwright 无头浏览器把海报 HTML 截成 PNG。
-
-    高度自适应（只放大不收缩，单调收敛）：
-    初始视口 = height（保底，如 1440 的 3:4 基准），量出 body 实际内容高度，
-    若更高则放大视口后再量，直至收敛。这样内容多时海报自动变长，内容少时保持 3:4。
-    """
-    from playwright.sync_api import sync_playwright
-
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--font-render-hinting=none"]
-        )
-        try:
-            page = browser.new_page(
-                viewport={"width": width, "height": height}, device_scale_factor=scale
-            )
-            page.goto(html_path.as_uri())
-            page.wait_for_load_state("networkidle")
-            for _ in range(3):  # 内容恒定，一两轮必收敛；3 轮是保险
-                real = int(
-                    page.evaluate(
-                        "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)"
-                    )
-                    or 0
-                )
-                real = max(real, height)
-                if abs(real - height) <= 2:
-                    break
-                height = real
-                page.set_viewport_size({"width": width, "height": height})
-                page.wait_for_load_state("networkidle")
-            page.screenshot(path=str(png_path), full_page=False)
-        finally:
-            browser.close()
-
-
 def _parsed_for_caption(board: DailyBoard, ratio: float, max_n: int) -> list[RankedScript]:
     """挑出值得写进文案的已解析剧本：原热度 ≥ 榜首热度 × ratio，按热度降序取前 max_n 本。
 
@@ -379,9 +342,24 @@ def _gen_caption(cfg: Config, board: DailyBoard) -> tuple[str, str]:
     return _template_caption(board, caption_parsed), "template"
 
 
-def _render_material_page(board_date: str, png_name: str, caption: str, caption_source: str) -> str:
-    """素材页：内嵌最新海报 + 文案，手机可长按存图、一键复制文案。"""
+def _render_material_page(
+    board_date: str, png_names: list[str], caption: str, caption_source: str
+) -> str:
+    """素材页：内嵌最新海报（多张切片按顺序）+ 文案，手机可长按存图、一键复制文案。"""
     caption_escaped = _escape(caption)
+    if png_names:
+        imgs = "".join(
+            f'<img class="poster" src="{_escape(p)}" alt="杭州剧本杀热度榜海报 {i}/{len(png_names)}">'
+            for i, p in enumerate(png_names, 1)
+        )
+        tip = (
+            f'长按图片保存到相册（共 {len(png_names)} 张，都是 3:4）'
+            if len(png_names) > 1
+            else "长按图片保存到相册"
+        )
+    else:
+        imgs = ""
+        tip = "海报没生成，先复制文案"
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -397,7 +375,7 @@ body {{
 .wrap {{ max-width: 560px; margin: 0 auto; }}
 h1 {{ font-size: 22px; margin-bottom: 4px; }}
 .date {{ color: #8c8578; font-size: 13px; margin-bottom: 16px; }}
-.poster {{ width: 100%; border-radius: 16px; box-shadow: 0 6px 20px rgba(60,30,15,.18); display: block; }}
+.poster {{ width: 100%; border-radius: 16px; box-shadow: 0 6px 20px rgba(60,30,15,.18); display: block; margin-bottom: 14px; }}
 .hint {{ text-align: center; color: #8c8578; font-size: 12px; margin: 10px 0 20px; }}
 .caption-box {{ background: #fff; border: 1px solid #ece7dd; border-radius: 16px; padding: 16px; }}
 .caption-box h2 {{ font-size: 15px; margin-bottom: 10px; }}
@@ -418,8 +396,8 @@ h1 {{ font-size: 22px; margin-bottom: 4px; }}
 <div class="wrap">
   <h1>今日小红书素材</h1>
   <div class="date">{_escape(board_date)} · 文案来源 {'AI 生成' if caption_source == 'llm' else '模板'}</div>
-  <img class="poster" src="{_escape(png_name)}" alt="杭州剧本杀热度榜海报">
-  <div class="hint">长按图片保存到相册</div>
+  {imgs}
+  <div class="hint">{tip}</div>
   <div class="caption-box">
     <h2>发布文案</h2>
     <pre id="caption">{caption_escaped}</pre>
@@ -475,12 +453,22 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
     result["parsed_count"] = len(board.filtered_items) if show_parsed else 0
     result["parsed_in_poster"] = bool(parsed_section)
 
-    # 2) 截图 PNG（视口高度自适应实际内容，初始给 3:4 保底）
+    # 2) 截图 PNG（按小红书 3:4：内容一页内→单张标准 3:4；内容更多→按块边界切成多张）
     png_name = f"{board_date}.png"
     png_path = social_dir / png_name
     try:
-        _screenshot_png(poster_html, png_path, width, height, scale)
-        result["png"] = str(png_path)
+        slices = _screenshot_slices(
+            poster_html,
+            png_path,
+            width=width,
+            scale=scale,
+            page_height=height,
+            anchors=".hero,.item,.parsed,.footer",
+        )
+        if slices:
+            result["png"] = str(slices[0])
+            if len(slices) > 1:
+                result["pngs"] = [str(s) for s in slices]
     except Exception as exc:  # noqa: BLE001
         logger.warning("海报截图失败（Playwright/浏览器未就绪？）：%s", exc)
         result["png_error"] = str(exc)
@@ -495,7 +483,12 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
     # 4) 素材页（只有 PNG 成功才内嵌图片，否则退化为纯文案页）
     material = social_dir / "index.html"
     material.write_text(
-        _render_material_page(board_date, png_name if "png" in result else "", caption, source),
+        _render_material_page(
+            board_date,
+            [Path(p).name for p in result.get("pngs", [result["png"]])] if "png" in result else [],
+            caption,
+            source,
+        ),
         encoding="utf-8",
     )
     result["material_page"] = str(material)

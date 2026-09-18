@@ -34,7 +34,7 @@ from typing import Any
 import httpx
 
 from .config import Config
-from .shot import screenshot_html
+from .shot import screenshot_slices
 from .tz_util import get_tz
 
 logger = logging.getLogger(__name__)
@@ -369,7 +369,8 @@ body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaH
 .chip { font-size:12px; padding:3px 9px; background:var(--chip); border:1px solid var(--chip-border);
   border-radius:20px; }
 .shot { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:12px; margin-top:16px; }
-.shot img { display:block; width:100%; height:auto; border-radius:10px; }
+.shot img { display:block; width:100%; height:auto; border-radius:10px; margin-bottom:10px; }
+.shot img:last-child { margin-bottom:0; }
 .tip { text-align:center; color:var(--muted); font-size:12px; margin-top:8px; }
 .warn { background:#fff8f1; border:1px dashed #f9d9c5; border-radius:12px; padding:12px 14px;
   font-size:12px; color:#6b6255; margin-bottom:14px; }
@@ -470,17 +471,23 @@ def render_week_html(
     report: WeeklyReport,
     caption: str,
     png_name: str | None = None,
+    extra_pngs: list[str] | None = None,
 ) -> str:
-    """周报页：时间范围 + 概览 + 榜单 + 海报图 + 复制文案按钮。"""
+    """周报页：时间范围 + 概览 + 榜单 + 海报切片 + 复制文案按钮。"""
     caption_json = json.dumps(caption, ensure_ascii=False)
     warn = f'<div class="warn">{html.escape(report.error)}</div>' if report.error else ""
     shot = ""
     if png_name:
+        pngs = [png_name, *(extra_pngs or [])]
+        imgs = "".join(
+            f'<img src="{urllib.parse.quote(p)}" '
+            f'alt="{html.escape(report.range_text)} 周报 {i}/{len(pngs)}">'
+            for i, p in enumerate(pngs, 1)
+        )
         shot = (
-            f'<div class="section-title">📌 海报（长按保存）</div>'
-            f'<div class="shot"><img src="{urllib.parse.quote(png_name)}" '
-            f'alt="{html.escape(report.range_text)} 周报"></div>'
-            f'<div class="tip">↑ 长按图片保存到相册，配下面的文案发小红书</div>'
+            f'<div class="section-title">📌 海报切片（长按保存，共 {len(pngs)} 张）</div>'
+            f'<div class="shot">{imgs}</div>'
+            f'<div class="tip">↑ 按顺序长按保存到相册，配下面的文案发小红书（每张都是 3:4）</div>'
         )
     else:
         shot = '<div class="warn">海报没生成（容器缺 Playwright 浏览器），先复制文案用。</div>'
@@ -682,15 +689,26 @@ def write_weekly(
     caption, caption_source = gen_caption(cfg, report)
 
     png_name = None
+    png_names: list[str] = []
     if not skip_png:
         sheet = out_dir / f"{key}.sheet.html"
         sheet.write_text(render_week_sheet(report), encoding="utf-8")
-        png_path = out_dir / f"{key}.png"
-        if screenshot_html(sheet, png_path, width=375, height=900, scale=2):
-            png_name = png_path.name
+        # 按小红书 3:4 切片：第一张沿用 {key}.png，后续 {key}-2.png、{key}-3.png…
+        slices = screenshot_slices(
+            sheet,
+            out_dir / f"{key}.png",
+            width=375,
+            scale=2,
+            anchors=".hero,.summary,.item,.section-title,.chips,.foot",
+        )
+        png_names = [s.name for s in slices]
+        png_name = png_names[0] if png_names else None
 
     page = out_dir / f"{key}.html"
-    page.write_text(render_week_html(report, caption, png_name), encoding="utf-8")
+    page.write_text(
+        render_week_html(report, caption, png_name, extra_pngs=png_names[1:]),
+        encoding="utf-8",
+    )
 
     txt = out_dir / f"{key}.txt"
     txt.write_text(caption, encoding="utf-8")
@@ -710,6 +728,7 @@ def write_weekly(
                 "total_rows": report.total_rows,
                 "backend": report.backend,
                 "caption_source": caption_source,
+                "pngs": png_names,
                 "items": [i.to_dict() for i in report.items],
             },
             ensure_ascii=False,

@@ -18,7 +18,6 @@
 """
 from __future__ import annotations
 
-import base64
 import html
 import json
 import logging
@@ -391,8 +390,8 @@ def render_shop_html(
             dms_html = f'<div class="dms"><span class="dms-label">DM：</span>{chips}{tail}</div>'
         elif s.undm_reviews:
             dms_html = (
-                f'<div class="dms"><span class="dms-label">DM：</span>'
-                f'<span class="dms-undm">玩家未点名具体 DM</span></div>'
+                '<div class="dms"><span class="dms-label">DM：</span>'
+                '<span class="dms-undm">玩家未点名具体 DM</span></div>'
             )
 
         # 玩家评论摘要（核心）
@@ -416,7 +415,7 @@ def render_shop_html(
                     f'<div class="review-snip"><span class="nick">{nick}：</span>{txt}</div>'
                 )
             snips = (
-                f'<div class="review-snips-title">原评论摘录</div>'
+                '<div class="review-snips-title">原评论摘录</div>'
                 + "".join(snips_parts)
             )
 
@@ -533,8 +532,8 @@ def render_poster_sheet(
             dms_html = f'<div class="dms"><span class="dms-label">DM：</span>{chips}{tail}</div>'
         elif s.undm_reviews:
             dms_html = (
-                f'<div class="dms"><span class="dms-label">DM：</span>'
-                f'<span class="dms-undm">玩家未点名具体 DM</span></div>'
+                '<div class="dms"><span class="dms-label">DM：</span>'
+                '<span class="dms-undm">玩家未点名具体 DM</span></div>'
             )
 
         # 海报里摘要截断到 70 字：原文 80~120 字，图上放太长会撑爆高度
@@ -858,12 +857,12 @@ def _gen_shop_summaries(cfg: Config, script_title: str, shops: list[ShopStat]) -
                     f"以下是这家店的玩家评论原文（已经过滤掉没注明店家的）：\n"
                     + "\n".join(lines)
                     + "\n\n请基于上面这些真实评论原文，**用一段话（80~120 字）**总结玩家对这家店的评价。"
-                    f"要求：\n"
-                    f"1. 必须是综合上述评论得出的判断，不能杜撰具体细节；\n"
-                    f"2. 直接给出结论（氛围/DM 带本水平/时长/适配人群/重复率等任意一个最突出的点）；\n"
-                    f"3. 若提到了 DM 必须用其原名；\n"
-                    f"4. 不要出现\"综合评分\"\"三维度均值\"等术语，读者不关心这个；\n"
-                    f"5. 只输出这段话，不要任何标题/前缀/解释。"
+                    "要求：\n"
+                    "1. 必须是综合上述评论得出的判断，不能杜撰具体细节；\n"
+                    "2. 直接给出结论（氛围/DM 带本水平/时长/适配人群/重复率等任意一个最突出的点）；\n"
+                    "3. 若提到了 DM 必须用其原名；\n"
+                    "4. 不要出现\"综合评分\"\"三维度均值\"等术语，读者不关心这个；\n"
+                    "5. 只输出这段话，不要任何标题/前缀/解释。"
                 )
                 resp = httpx.post(
                     f"{cfg.llm_base_url}/chat/completions",

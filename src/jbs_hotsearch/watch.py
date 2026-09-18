@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import re as _re
 import threading
 import time
 import urllib.error
@@ -109,8 +110,6 @@ def _post_webhook(url: str, payload: dict[str, Any]) -> None:
 # ----------------------------------------------------------------------------
 # 评论聚合（reviews）：挂载 data/reviews/*.html 与 *.txt
 # ----------------------------------------------------------------------------
-import re as _re
-
 def _reviews_dir(cfg: Config) -> Path:
     return cfg.data_dir / "reviews"
 
