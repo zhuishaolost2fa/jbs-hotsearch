@@ -369,9 +369,32 @@ body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaH
 .chip { font-size:12px; padding:3px 9px; background:var(--chip); border:1px solid var(--chip-border);
   border-radius:20px; }
 .shot { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:12px; margin-top:16px; }
-.shot img { display:block; width:100%; height:auto; border-radius:10px; margin-bottom:10px; }
-.shot img:last-child { margin-bottom:0; }
+/* 切片：两列网格，每张独立卡片 + 序号，边界一眼看得出（原来是一列长图往下堆） */
+.slices { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.slices.single { grid-template-columns:1fr; }
+.slice { position:relative; background:#fff; border:1px solid var(--line); border-radius:12px;
+  padding:6px; cursor:zoom-in; }
+.slice img { display:block; width:100%; height:auto; border-radius:8px; border:1px solid var(--line); }
+.slice .no { position:absolute; left:12px; top:12px; background:rgba(33,29,24,.74); color:#fff;
+  font-size:11px; font-weight:700; padding:2px 8px; border-radius:20px; letter-spacing:.5px; }
+.slice-acts { display:flex; gap:8px; margin-top:10px; }
+.slice-btn { flex:1; padding:10px 6px; border-radius:10px; font-size:13px; font-weight:600;
+  border:1px solid var(--chip-border); background:var(--chip); color:var(--brand); cursor:pointer; }
+.slice-btn:active { opacity:.8; }
+.slice-btn.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
 .tip { text-align:center; color:var(--muted); font-size:12px; margin-top:8px; }
+/* 大图预览：手机上长按这张大图即可存入相册 */
+.lightbox { position:fixed; inset:0; z-index:99; display:none; flex-direction:column;
+  align-items:center; justify-content:center; padding:18px; background:rgba(18,12,8,.94); }
+.lightbox.on { display:flex; }
+.lightbox img { max-width:100%; max-height:68vh; border-radius:12px; background:#fff; }
+.lightbox .lb-no { color:#fff; font-size:13px; margin-top:14px; }
+.lightbox .lb-save { margin-top:14px; padding:10px 22px; border-radius:24px; background:var(--brand);
+  color:#fff; font-size:14px; font-weight:600; }
+.lightbox .lb-nav { display:flex; gap:26px; align-items:center; margin-top:12px; color:#fff; font-size:14px; }
+.lightbox .lb-nav span { padding:6px 16px; border:1px solid rgba(255,255,255,.35); border-radius:20px; cursor:pointer; }
+.lightbox .lb-close { position:absolute; right:16px; top:14px; color:#fff; font-size:28px;
+  line-height:1; padding:6px 10px; cursor:pointer; }
 .warn { background:#fff8f1; border:1px dashed #f9d9c5; border-radius:12px; padding:12px 14px;
   font-size:12px; color:#6b6255; margin-bottom:14px; }
 .foot { text-align:center; color:var(--muted); font-size:11px; margin-top:20px; }
@@ -479,15 +502,27 @@ def render_week_html(
     shot = ""
     if png_name:
         pngs = [png_name, *(extra_pngs or [])]
+        single = " single" if len(pngs) == 1 else ""
         imgs = "".join(
-            f'<img src="{urllib.parse.quote(p)}" '
+            f'<figure class="slice" onclick="openLb({i - 1})">'
+            f'<img src="{urllib.parse.quote(p)}" data-file="{html.escape(p)}" '
             f'alt="{html.escape(report.range_text)} 周报 {i}/{len(pngs)}">'
+            f'<figcaption class="no">第 {i} 张</figcaption>'
+            f"</figure>"
             for i, p in enumerate(pngs, 1)
         )
         shot = (
-            f'<div class="section-title">📌 海报切片（长按保存，共 {len(pngs)} 张）</div>'
-            f'<div class="shot">{imgs}</div>'
-            f'<div class="tip">↑ 按顺序长按保存到相册，配下面的文案发小红书（每张都是 3:4）</div>'
+            f'<div class="section-title">📌 海报切片（共 {len(pngs)} 张 · 每张 3:4）</div>'
+            f'<div class="shot">'
+            f'<div class="slices{single}">{imgs}</div>'
+            f'<div class="slice-acts">'
+            f'<button class="slice-btn primary" type="button" id="saveAllBtn" '
+            f'onclick="saveAllSlices(this)">⬇️ 一键保存全部（{len(pngs)} 张）</button>'
+            f'<button class="slice-btn" type="button" onclick="openLb(0)">🔍 逐张预览保存</button>'
+            f"</div>"
+            f'<div class="tip">点任意一张可放大，长按存进相册；安卓「一键保存」会依次下载，'
+            f'iPhone 请用「逐张预览」长按保存</div>'
+            f"</div>"
         )
     else:
         shot = '<div class="warn">海报没生成（容器缺 Playwright 浏览器），先复制文案用。</div>'
@@ -510,6 +545,16 @@ def render_week_html(
     </div>
     <div><button class="copy-btn" type="button" onclick="copyCaption(this)">📋 复制小红书文案</button></div>
   </header>
+  <div class="lightbox" id="lb" onclick="closeLb()">
+    <div class="lb-close">×</div>
+    <img id="lbImg" src="" alt="周报海报大图" onclick="event.stopPropagation()">
+    <div class="lb-no" id="lbNo"></div>
+    <div class="lb-save" onclick="event.stopPropagation(); saveOne(lbIdx)">⬇️ 保存本张</div>
+    <div class="lb-nav">
+      <span onclick="event.stopPropagation(); lbStep(-1)">← 上一张</span>
+      <span onclick="event.stopPropagation(); lbStep(1)">下一张 →</span>
+    </div>
+  </div>
   {warn}
   <section class="summary">
     <div><b>{len(report.items)}</b><span>本期 Top</span></div>
@@ -538,6 +583,70 @@ function copyCaption(btn) {{
     document.body.removeChild(ta);
   }}
 }}
+
+/* ---- 海报切片：大图预览 + 一键保存 ---- */
+var lbIdx = 0;
+function lbImages() {{ return [].slice.call(document.querySelectorAll('.slice img')); }}
+function openLb(i) {{
+  var imgs = lbImages();
+  if (!imgs.length) return;
+  lbIdx = i;
+  document.getElementById('lbImg').src = imgs[i].src;
+  document.getElementById('lbNo').textContent = '第 ' + (i + 1) + ' / ' + imgs.length + ' 张 · 长按图片保存到相册';
+  document.getElementById('lb').classList.add('on');
+  document.body.style.overflow = 'hidden';
+}}
+function lbStep(d) {{
+  var imgs = lbImages();
+  if (!imgs.length) return;
+  openLb((lbIdx + d + imgs.length) % imgs.length);
+}}
+function closeLb() {{
+  document.getElementById('lb').classList.remove('on');
+  document.body.style.overflow = '';
+}}
+function saveOne(i) {{
+  var imgs = lbImages();
+  if (!imgs[i]) return;
+  var a = document.createElement('a');
+  a.href = imgs[i].src;
+  a.download = imgs[i].getAttribute('data-file') || ('slice-' + (i + 1) + '.png');
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}}
+/* 一键保存：逐个触发 <a download>。安卓会依次下载到「下载」目录，
+   iOS Safari 不支持连续下载（只会打开一张），所以页面提示 iPhone 用预览长按保存。 */
+async function saveAllSlices(btn) {{
+  var imgs = lbImages();
+  if (!imgs.length) return;
+  var label = btn.textContent;
+  btn.disabled = true;
+  for (var i = 0; i < imgs.length; i++) {{
+    btn.textContent = '正在保存 ' + (i + 1) + '/' + imgs.length + ' …';
+    saveOne(i);
+    await new Promise(function(r) {{ setTimeout(r, 600); }});
+  }}
+  btn.textContent = '✓ 已触发 ' + imgs.length + ' 张，去相册/下载看看';
+  setTimeout(function() {{ btn.textContent = label; btn.disabled = false; }}, 2500);
+}}
+document.addEventListener('keydown', function(e) {{
+  var lb = document.getElementById('lb');
+  if (!lb || !lb.classList.contains('on')) return;
+  if (e.key === 'Escape') closeLb();
+  if (e.key === 'ArrowLeft') lbStep(-1);
+  if (e.key === 'ArrowRight') lbStep(1);
+}});
+/* 大图里左右滑动切换 */
+(function(){{
+  var x0 = null, lb = document.getElementById('lb');
+  if (!lb) return;
+  lb.addEventListener('touchstart', function(e) {{ x0 = e.touches[0].clientX; }}, {{passive:true}});
+  lb.addEventListener('touchend', function(e) {{
+    if (x0 === null) return;
+    var dx = e.changedTouches[0].clientX - x0;
+    if (Math.abs(dx) > 45) lbStep(dx < 0 ? 1 : -1);
+    x0 = null;
+  }});
+}})();
 </script>
 </body></html>"""
 
