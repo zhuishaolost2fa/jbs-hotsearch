@@ -10,6 +10,7 @@
     python -m jbs_hotsearch reviews   # 从 HAR 评测聚合出店家榜 + 小红书素材
     python -m jbs_hotsearch status    # 终端里看最近 N 天跑没跑成
     python -m jbs_hotsearch watch     # 起监听大盘（Web，含 /healthz 健康检查位）
+    python -m jbs_hotsearch recipes   # 看文案 A/B 配方，以及未来 N 天会命中哪套
 """
 from __future__ import annotations
 
@@ -102,6 +103,31 @@ def _print_status(cfg: Config, days: int, as_json: bool = False) -> int:
     return 0
 
 
+def _print_recipes(cfg: Config, days: int) -> int:
+    """列出文案配方，并预排未来 N 天各自命中哪套（按日期哈希轮换，可预知）。"""
+    from .caption_recipes import load_recipes, pick_recipe
+
+    recipes = load_recipes(cfg)
+    print(f"# 文案配方（共 {len(recipes)} 套）")
+    for r in recipes:
+        flag = "启用" if r.enabled else "停用"
+        builtin = " · 内置兜底" if r.is_builtin else ""
+        print(f"  [{flag}] {r.id:<12} 权重 {r.weight}  {r.name}{builtin}")
+        if r.note:
+            print(f"        备注：{r.note}")
+
+    if not [r for r in recipes if r.enabled]:
+        print("\n没有启用中的配方，文案会走内置兜底。")
+        return 1
+
+    print(f"\n# 未来 {days} 天的分流预排")
+    start = date.today()
+    for i in range(max(1, days)):
+        d = date.fromordinal(start.toordinal() + i)
+        print(f"  {d.isoformat()}  →  {pick_recipe(recipes, d).id}")
+    return 0
+
+
 def _run_watch(cfg: Config, args: argparse.Namespace) -> int:
     """起 Web 大盘；带 --emit 时只生成一份静态 HTML 就退出。"""
     from .dashboard import render, render_json
@@ -140,10 +166,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "command",
         choices=["once", "serve", "preview", "doctor", "board", "social", "reviews", "weekly",
-                 "status", "watch"],
+                 "status", "watch", "recipes"],
     )
     parser.add_argument("--date", help="指定榜单日期 YYYY-MM-DD（默认今天）")
-    parser.add_argument("--days", type=int, help="status / watch 的回看天数")
+    parser.add_argument("--days", type=int, help="status / watch 的回看天数；recipes 的预排天数")
     parser.add_argument("--host", help="watch 监听地址（默认 127.0.0.1）")
     parser.add_argument("--port", type=int, help="watch 监听端口（默认 8787）")
     parser.add_argument("--refresh", type=int, help="大盘页面自动刷新秒数（0 = 不自动刷新）")
@@ -172,6 +198,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         return _print_status(cfg, days=args.days or cfg.watch_days, as_json=args.json)
+
+    if args.command == "recipes":
+        return _print_recipes(cfg, days=args.days or 14)
 
     if args.command == "watch":
         return _run_watch(cfg, args)

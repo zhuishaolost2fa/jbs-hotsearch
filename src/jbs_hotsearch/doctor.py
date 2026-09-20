@@ -70,4 +70,25 @@ def run(cfg: Config) -> int:
                 ok = False
             else:
                 print("     auto 模式会降级到本地 SQLite，不阻塞日常出榜")
+
+    # 配方读不到不阻塞出榜（会回退内置文案），所以只提示、不置 ok=False
+    print("== 文案配方（A/B）==")
+    if not getattr(cfg, "social_caption_recipes", True):
+        print("  ⚠️  已关闭（HS_SOCIAL_CAPTION_RECIPES=0），文案固定用内置配方")
+    else:
+        from .caption_recipes import load_recipes, pick_recipe
+
+        recipes = load_recipes(cfg)
+        real = [r for r in recipes if not r.is_builtin]
+        if not real:
+            print("  ⚠️  没读到配方，文案走内置兜底（不影响出榜）")
+            print("     想跑 A/B：去 Supabase SQL Editor 执行一次 sql/caption_recipes.sql")
+        else:
+            enabled = [r for r in real if r.enabled]
+            print(f"  ✅ {len(real)} 套配方（启用 {len(enabled)} 套）")
+            for r in real:
+                mark = "启用" if r.enabled else "停用"
+                print(f"     [{mark}] {r.id:<12} 权重 {r.weight}  {r.name}")
+            today = __import__("datetime").date.today()
+            print(f"     今天命中：{pick_recipe(recipes, today).id}")
     return 0 if ok else 1

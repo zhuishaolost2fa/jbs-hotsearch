@@ -155,9 +155,13 @@ class Config:
     # 文案里点名提到已解析剧本的热度门槛：原热度 ≥ 榜首热度 × 该比例才值得写进文案。
     # 用意是「冷门的已解析本（如 25 分）不值得占文案篇幅，但比榜首还热的一定要提」。
     # 设 0 = 不筛选（全部已解析本都塞给 LLM）。
+    # 这是**全局默认**，Supabase caption_recipes 表里单个配方可覆盖。
     social_caption_parsed_ratio: float = 0.5
-    # 文案里最多点名几本已解析（按热度降序取前 N 本）
+    # 文案里最多点名几本已解析（按热度降序取前 N 本），同样可被配方覆盖
     social_caption_parsed_max: int = 2
+    # 是否启用「文案配方 A/B」：从 Supabase caption_recipes 表读配方，按日期哈希轮换。
+    # 关掉 = 永远用代码内置那套（等同改造前的行为），出问题时用它一键止血。
+    social_caption_recipes: bool = True
 
     @property
     def http_timeout(self) -> float:
@@ -214,6 +218,7 @@ class Config:
             social_parsed_limit=_get_int("HS_SOCIAL_PARSED_LIMIT", 6),
             social_caption_parsed_ratio=_get_float("HS_SOCIAL_CAPTION_PARSED_RATIO", 0.5),
             social_caption_parsed_max=_get_int("HS_SOCIAL_CAPTION_PARSED_MAX", 2),
+            social_caption_recipes=_get_bool("HS_SOCIAL_CAPTION_RECIPES", True),
             watch_host=_get("HS_WATCH_HOST", "127.0.0.1"),
             watch_port=_get_int("HS_WATCH_PORT", 8787),
             watch_days=_get_int("HS_WATCH_DAYS", 30),

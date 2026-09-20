@@ -15,41 +15,17 @@
 from __future__ import annotations
 
 import html
+import json
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
-import httpx
-
+from .caption_recipes import gen_daily_caption, log_run
 from .config import Config
 from .models import DailyBoard, RankedScript
 from .shot import screenshot_slices as _screenshot_slices
 
 logger = logging.getLogger(__name__)
-
-# LLM 偶发「重复退化」：结尾刷出上百个相同 emoji（如 😉😉😉…）。
-# 这里只压缩「非中文/非字母数字」符号的连续重复（3 个及以上压成 1 个），
-# 因此「哈哈哈」「！！！」这类合法中文表达不会被误伤。
-_REPEAT_RUN = re.compile(r"([^\s\w\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\1{2,}")
-_CAPTION_MAX_LEN = 600
-
-
-def _sanitize_caption(text: str) -> str:
-    """清洗 LLM 文案：压掉重复符号串、去空行、超长截断。"""
-    if not text:
-        return ""
-    cleaned = _REPEAT_RUN.sub(r"\1", text)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-    if len(cleaned) > _CAPTION_MAX_LEN:
-        cut = cleaned[:_CAPTION_MAX_LEN].rstrip()
-        # 尽量在句子边界截断，避免半句话
-        for sep in ("\n", "。", "！", "？"):
-            pos = cut.rfind(sep)
-            if pos > _CAPTION_MAX_LEN * 0.6:
-                return cut[: pos + 1]
-        return cut + "…"
-    return cleaned
 
 
 def _escape(value: Any) -> str:
@@ -224,35 +200,6 @@ body {{
 </html>"""
 
 
-def _parsed_for_caption(board: DailyBoard, ratio: float, max_n: int) -> list[RankedScript]:
-    """挑出值得写进文案的已解析剧本：原热度 ≥ 榜首热度 × ratio，按热度降序取前 max_n 本。
-
-    为什么按「相对榜首」而不是绝对分数：每天热度尺度会漂移（有时榜首 100、有时 60），
-    绝对值阈值不稳定；相对榜首能稳定表达「这个本够不够格跟榜首相提并论」。
-    """
-    if not board.items or not board.filtered_items:
-        return []
-    top = float(board.items[0].hot_score or 0)
-    if ratio <= 0:  # 0 = 不筛选
-        picked = list(board.filtered_items)
-    else:
-        threshold = top * ratio
-        picked = [it for it in board.filtered_items if float(it.hot_score or 0) >= threshold]
-    picked.sort(key=lambda it: -float(it.hot_score or 0))
-    return picked[: max(1, max_n)]
-
-
-def _board_summary(board: DailyBoard, caption_parsed: list[RankedScript] | None = None) -> str:
-    lines = []
-    for it in board.items:
-        meta = _item_meta(it)
-        lines.append(f"{it.rank}. {it.title}（热度 {it.hot_score:.0f}" + (f"，{meta}" if meta else "") + "）")
-    if caption_parsed:
-        parsed = "、".join(f"{it.title}（原热度 {it.hot_score:.0f}）" for it in caption_parsed)
-        lines.append(f"已解析（攻略已上线，未入榜）：{parsed}")
-    return "\n".join(lines)
-
-
 _TEMPLATE_CAPTION = """📊 杭州剧本杀热度榜 · {date}
 
 今日榜首《{top1}》，杭州近 3 天真实拼场人气第一🔥
@@ -262,61 +209,6 @@ _TEMPLATE_CAPTION = """📊 杭州剧本杀热度榜 · {date}
 {parsed_line}
 
 #剧本杀 #杭州剧本杀 #周末去哪玩 #热门剧本杀 #剧本杀推荐"""
-
-
-def _caption_via_llm(cfg: Config, board: DailyBoard) -> str | None:
-    """调 SiliconFlow 生成小红书文案；失败返回 None 走模板。"""
-    if not cfg.llm_api_key:
-        return None
-    # 已解析本按热度筛选后再喂给 LLM，避免冷门本占用文案篇幅
-    caption_parsed = _parsed_for_caption(
-        board, cfg.social_caption_parsed_ratio, cfg.social_caption_parsed_max
-    )
-    summary = _board_summary(board, caption_parsed)
-    parsed_names = "、".join(it.title for it in caption_parsed)
-    parsed_hint = (
-        f"4. 文末必须点名提到这些已解析剧本：{parsed_names}。"
-        "说明它们热度够高但攻略已整理好（DM 手册已入库），并引导读者私信或看主页获取攻略；"
-        "注意不要把它们写成榜内排名，它们是「已解析未入榜」\n"
-        if parsed_names
-        else ""
-    )
-    prompt = (
-        f"以下是今天（{board.board_date.isoformat()}）的杭州剧本杀热度榜 Top{len(board.items)}：\n"
-        f"{summary}\n\n"
-        "请以小红书剧本杀垂类博主的语气写一段发布文案，要求：\n"
-        "1. 第一行是标题，带 1-2 个 emoji，要有钩子（点出榜首或最大黑马）\n"
-        "2. 正文 2-4 句话，口语化，点出 1-3 个值得关注的点（榜首、上升快、新上榜）\n"
-        "3. 结尾 3-5 个话题标签，如 #剧本杀 #杭州剧本杀 #周末去哪儿\n"
-        f"{parsed_hint}"
-        "直接输出文案，不要任何解释或前后缀。"
-    )
-    try:
-        resp = httpx.post(
-            f"{cfg.llm_base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg.llm_api_key}"},
-            json={
-                "model": cfg.llm_model,
-                "messages": [
-                    {"role": "system", "content": "你是小红书剧本杀垂类博主，文案口语化、有情绪、有钩子。"},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.8,
-                "max_tokens": 400,
-                # 从源头抑制「重复退化」（曾出现过结尾刷上百个 😉 的情况）
-                "repetition_penalty": 1.15,
-            },
-            timeout=cfg.http_timeout + 30.0,
-        )
-        if resp.status_code != 200:
-            logger.warning("文案 LLM 返回 %s：%s", resp.status_code, resp.text[:200])
-            return None
-        content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "")
-        content = _sanitize_caption((content or "").strip().strip('"'))
-        return content or None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("文案 LLM 调用失败，回退模板：%s", exc)
-        return None
 
 
 def _template_caption(board: DailyBoard, caption_parsed: list[RankedScript] | None = None) -> str:
@@ -331,26 +223,41 @@ def _template_caption(board: DailyBoard, caption_parsed: list[RankedScript] | No
     )
 
 
-def _gen_caption(cfg: Config, board: DailyBoard) -> tuple[str, str]:
-    """返回 (文案, 来源)；来源 = llm / template。"""
-    caption_parsed = _parsed_for_caption(
-        board, cfg.social_caption_parsed_ratio, cfg.social_caption_parsed_max
-    )
-    llm_text = _caption_via_llm(cfg, board)
-    if llm_text:
-        return llm_text, "llm"
-    return _template_caption(board, caption_parsed), "template"
+def _gen_caption(cfg: Config, board: DailyBoard):
+    """按配方生成文案，返回 CaptionResult（含 .caption / .source / .recipe）。
+
+    prompt 与采样参数全部来自 Supabase 的 caption_recipes 表，按日期哈希轮换，
+    改文案不用动代码也不用重新部署；取不到配方时自动回退内置那套。
+    """
+    return gen_daily_caption(cfg, board, meta_fn=_item_meta, template_fn=_template_caption)
 
 
 def _render_material_page(
-    board_date: str, png_names: list[str], caption: str, caption_source: str
+    board_date: str,
+    png_names: list[str],
+    caption: str,
+    caption_source: str,
+    recipe: object | None = None,
 ) -> str:
-    """素材页：海报切片（两列 + 序号 + 大图预览 + 一键保存）+ 文案。
+    """素材页：海报切片（两列 + 序号 + 大图预览 + 一键保存）+ 文案 + 本次配方。
 
     切片排版跟周报保持一致：两列网格、每张独立卡片带「第 N 张」角标，
     用户一眼能看出每张的边界，不用再对着一整条长图猜哪里断开。
     """
     caption_escaped = _escape(caption)
+    # A/B 实验留痕：真人得知道今天这条文案是哪套配方出的，才好评判
+    recipe_html = ""
+    if recipe is not None and getattr(recipe, "name", ""):
+        meta = recipe.as_meta() if hasattr(recipe, "as_meta") else {}
+        bits = [f'配方 {_escape(meta.get("name") or "")}']
+        if not meta.get("is_builtin"):
+            bits.append(f'id={_escape(meta.get("id") or "")}')
+        bits.append(f'来源 {"AI 生成" if caption_source == "llm" else "模板兜底"}')
+        if meta.get("model"):
+            bits.append(_escape(meta["model"]))
+        if meta.get("temperature") is not None:
+            bits.append(f'temp {meta["temperature"]}')
+        recipe_html = f'<div class="recipe">A/B 实验 · {" · ".join(bits)}</div>'
     if png_names:
         total = len(png_names)
         single = " single" if total == 1 else ""
@@ -399,7 +306,11 @@ body {{
 }}
 .wrap {{ max-width: 560px; margin: 0 auto; }}
 h1 {{ font-size: 22px; margin-bottom: 4px; }}
-.date {{ color: #8c8578; font-size: 13px; margin-bottom: 16px; }}
+.date {{ color: #8c8578; font-size: 13px; margin-bottom: 6px; }}
+.recipe {{
+  display: inline-block; background: #fff5ee; border: 1px solid #f0c9b9; color: #a8451f;
+  font-size: 12px; padding: 4px 10px; border-radius: 20px; margin-bottom: 16px;
+}}
 /* 切片：两列网格 + 独立卡片 + 序号，边界一眼看得出 */
 .slices {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
 .slices.single {{ grid-template-columns: 1fr; }}
@@ -457,7 +368,8 @@ h1 {{ font-size: 22px; margin-bottom: 4px; }}
 <body>
 <div class="wrap">
   <h1>今日小红书素材</h1>
-  <div class="date">{_escape(board_date)} · 文案来源 {'AI 生成' if caption_source == 'llm' else '模板'}</div>
+  <div class="date">{_escape(board_date)}</div>
+  {recipe_html}
   {shot}
   <div class="hint">{tip}</div>
   <div class="caption-box">
@@ -609,12 +521,33 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
         logger.warning("海报截图失败（Playwright/浏览器未就绪？）：%s", exc)
         result["png_error"] = str(exc)
 
-    # 3) 文案
-    caption, source = _gen_caption(cfg, board)
+    # 3) 文案（按 caption_recipes 配方生成，A/B 轮换）
+    cap = _gen_caption(cfg, board)
     caption_path = social_dir / f"{board_date}.txt"
-    caption_path.write_text(caption, encoding="utf-8")
+    caption_path.write_text(cap.caption, encoding="utf-8")
     result["caption"] = str(caption_path)
-    result["caption_source"] = source
+    result["caption_source"] = cap.source
+    result["recipe"] = cap.recipe.as_meta()
+    result["recipe_id"] = cap.recipe.id
+
+    # 配方留痕：哪天用了哪套 + 出了什么，几周后回看对比用
+    recipe_json = social_dir / f"{board_date}.caption.json"
+    recipe_json.write_text(
+        json.dumps(
+            {
+                "board_date": board_date,
+                "recipe": cap.recipe.as_meta(),
+                "source": cap.source,
+                "model": cap.model,
+                "caption_len": len(cap.caption),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    result["recipe_json"] = str(recipe_json)
+    log_run(cfg, board.board_date, cap)
 
     # 4) 素材页（只有 PNG 成功才内嵌图片，否则退化为纯文案页）
     material = social_dir / "index.html"
@@ -622,11 +555,12 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
         _render_material_page(
             board_date,
             [Path(p).name for p in result.get("pngs", [result["png"]])] if "png" in result else [],
-            caption,
-            source,
+            cap.caption,
+            cap.source,
+            cap.recipe,
         ),
         encoding="utf-8",
     )
     result["material_page"] = str(material)
-    result["ok"] = "png" in result and bool(caption)
+    result["ok"] = "png" in result and bool(cap.caption)
     return result
