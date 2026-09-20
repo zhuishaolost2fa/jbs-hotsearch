@@ -6,17 +6,21 @@
   data/social/YYYY-MM-DD.txt   小红书文案（含话题标签）
   data/social/poster.html      最新一张海报的 HTML（调试/复刻用）
   data/social/index.html       素材页（内嵌最新图 + 文案，手机可存图/复制）
+  data/social/miniapp-qr.png   小程序码独立文件（海报已印 + 素材页可单独保存）
 
 设计原则：
   - 海报复用榜单页的暖橙视觉语言，独立 1080×1440 竖版布局；
   - Playwright 延迟 import，未装浏览器时只降级「截图失败」，不拖垮出榜；
-  - 文案 LLM 失败时回退到模板，保证每天都有可用文案。
+  - 文案 LLM 失败时回退到模板，保证每天都有可用文案；
+  - 小程序码是打包资产，缺文件时海报自动退回「不带码」，绝不因为一张图挂掉出榜。
 """
 from __future__ import annotations
 
+import base64
 import html
 import json
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +36,53 @@ def _escape(value: Any) -> str:
     if value is None:
         return ""
     return html.escape(str(value), quote=True)
+
+
+# ─────────── 小程序码（打包资产） ────────────────────────────────────
+# 码图随包分发（src/jbs_hotsearch/assets/miniapp_qr.png）：
+#   - 海报 HTML 里直接 base64 内嵌 —— 截图走 file://、素材页走公网静态托管，
+#     不需要考虑相对路径和目录布局，一份字节三种场景通吃；
+#   - 素材页另存一份独立文件，发布时想单独发图 / 换图都方便。
+# 文件本体是一次性转好的 430×430 PNG（原微信导出是 JPEG 装在 .png 名里），
+# 更换码图时直接覆盖这个文件即可，代码不用动（MIME 按字节头嗅探）。
+_QR_ASSET = Path(__file__).parent / "assets" / "miniapp_qr.png"
+
+
+def _qr_mime(raw: bytes) -> str:
+    if raw.startswith(b"\x89PNG"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if raw.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    return "application/octet-stream"
+
+
+@lru_cache(maxsize=1)
+def _qr_data_uri() -> str:
+    """小程序码的 data URI；资产缺失返回空串，海报退回不带码。"""
+    try:
+        raw = _QR_ASSET.read_bytes()
+    except OSError:
+        logger.warning("小程序码资产缺失（%s），海报不带码", _QR_ASSET)
+        return ""
+    return f"data:{_qr_mime(raw)};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def copy_qr_asset(dest_dir: Path) -> str:
+    """把小程序码落成素材目录里的独立文件，返回文件名；失败返回空串。"""
+    try:
+        raw = _QR_ASSET.read_bytes()
+    except OSError:
+        return ""
+    ext = {"image/png": ".png", "image/jpeg": ".jpg"}.get(_qr_mime(raw), ".png")
+    name = f"miniapp-qr{ext}"
+    try:
+        (dest_dir / name).write_bytes(raw)
+    except OSError as exc:
+        logger.warning("小程序码复制到素材目录失败：%s", exc)
+        return ""
+    return name
 
 
 def _rank_class(rank: int) -> str:
@@ -113,13 +164,26 @@ def render_poster_html(
     height: int = 1440,
     show_parsed: bool = True,
     parsed_limit: int = 6,
+    qr_uri: str = "",
 ) -> str:
-    """渲染竖版海报 HTML（body 尺寸随内容变化，一屏即完整海报）。"""
+    """渲染竖版海报 HTML（body 尺寸随内容变化，一屏即完整海报）。
+
+    qr_uri 传空 = 不渲染小程序码区块（资产缺失 / 用 HS_SOCIAL_QR 关掉）。
+    """
     items = board.items
     cards = "".join(_poster_item(it) for it in items)
     filtered = board.filtered_items if show_parsed else []
     parsed_block = _filtered_chips(filtered, parsed_limit)
     sub = "米圈杭州拼场 · 近 3 天真实组局"
+    qr_block = ""
+    if qr_uri:
+        qr_block = (
+            '\n  <section class="qrbox">'
+            f'\n    <img src="{qr_uri}" alt="小程序码">'
+            '\n    <div class="qt"><b>微信扫码 · 进小程序</b>'
+            "\n      <span>剧本杀热度榜 · 每日更新</span></div>"
+            "\n  </section>"
+        )
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -183,6 +247,15 @@ body {{
 .chip .strike {{ text-decoration: line-through; text-decoration-thickness: 2px; }}
 .chip .fscore {{ font-size: 17px; color: #a89e8e; }}
 .chip-more {{ background: #f7f5f0; color: #a89e8e; font-style: italic; }}
+
+/* 小程序码：白卡横条，码 + 两行引导。切片锚点带 .qrbox，整块永不被拦腰切 */
+.qrbox {{
+  margin-top: 14px; display: flex; align-items: center; gap: 22px;
+  background: #fff; border: 1px solid #ece7dd; border-radius: 16px; padding: 15px 20px;
+}}
+.qrbox img {{ width: 124px; height: 124px; border-radius: 14px; flex: 0 0 auto; }}
+.qrbox .qt b {{ display: block; font-size: 27px; font-weight: 800; letter-spacing: 1px; }}
+.qrbox .qt span {{ display: block; font-size: 19px; color: #8c8578; margin-top: 7px; }}
 </style>
 </head>
 <body>
@@ -193,7 +266,7 @@ body {{
     <div class="sub">{sub}</div>
     <div class="date">{_escape(board_date)}</div>
   </header>
-  <ol class="list">{cards}</ol>{parsed_block}
+  <ol class="list">{cards}</ol>{parsed_block}{qr_block}
   <div class="footer">热度由近 3 天真实组局计算 · 每日更新</div>
 </div>
 </body>
@@ -238,11 +311,13 @@ def _render_material_page(
     caption: str,
     caption_source: str,
     recipe: object | None = None,
+    qr_file: str = "",
 ) -> str:
     """素材页：海报切片（两列 + 序号 + 大图预览 + 一键保存）+ 文案 + 本次配方。
 
     切片排版跟周报保持一致：两列网格、每张独立卡片带「第 N 张」角标，
     用户一眼能看出每张的边界，不用再对着一整条长图猜哪里断开。
+    qr_file 传素材目录里的码图文件名，空 = 不展示小程序码卡片。
     """
     caption_escaped = _escape(caption)
     # A/B 实验留痕：真人得知道今天这条文案是哪套配方出的，才好评判
@@ -292,6 +367,18 @@ def _render_material_page(
     else:
         shot = ""
         tip = "海报没生成，先复制文案"
+    qr_html = ""
+    if qr_file:
+        qr_html = (
+            '<div class="qr-card">'
+            f'<img src="{_escape(qr_file)}" alt="小程序码">'
+            '<div class="qr-info"><h2>小程序码</h2>'
+            "<p>已印在海报底部。单独发图 / 换封面时用得上：点按钮下载，"
+            "或长按图片保存原图。</p>"
+            f'<a class="qr-save" href="{_escape(qr_file)}" '
+            f'download="{_escape(qr_file)}">⬇️ 保存小程序码</a>'
+            "</div></div>"
+        )
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -332,6 +419,20 @@ h1 {{ font-size: 22px; margin-bottom: 4px; }}
 .slice-btn:active {{ opacity: .85; }}
 .slice-btn:disabled {{ opacity: .6; }}
 .hint {{ text-align: center; color: #8c8578; font-size: 12px; margin: 10px 0 20px; }}
+/* 小程序码卡片：码图 + 说明 + 单独保存按钮 */
+.qr-card {{
+  display: flex; gap: 14px; align-items: center; background: #fff;
+  border: 1px solid #ece7dd; border-radius: 16px; padding: 14px; margin-bottom: 16px;
+}}
+.qr-card img {{ width: 110px; height: 110px; border-radius: 12px; border: 1px solid #ece7dd; flex: 0 0 auto; }}
+.qr-card h2 {{ font-size: 15px; margin-bottom: 4px; }}
+.qr-card p {{ font-size: 12px; color: #8c8578; line-height: 1.6; }}
+.qr-save {{
+  display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 600;
+  color: #e5532b; background: #fff5ee; border: 1px solid #f0c9b9;
+  padding: 6px 14px; border-radius: 20px; text-decoration: none;
+}}
+.qr-save:active {{ opacity: .85; }}
 .caption-box {{ background: #fff; border: 1px solid #ece7dd; border-radius: 16px; padding: 16px; }}
 .caption-box h2 {{ font-size: 15px; margin-bottom: 10px; }}
 .caption-box pre {{
@@ -372,6 +473,7 @@ h1 {{ font-size: 22px; margin-bottom: 4px; }}
   {recipe_html}
   {shot}
   <div class="hint">{tip}</div>
+  {qr_html}
   <div class="caption-box">
     <h2>发布文案</h2>
     <pre id="caption">{caption_escaped}</pre>
@@ -492,9 +594,16 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
     parsed_limit = max(1, int(cfg.social_parsed_limit))
     parsed_section = _filtered_chips(board.filtered_items, parsed_limit) if show_parsed else ""
 
+    # 小程序码：海报内嵌 base64 + 素材目录落一份独立文件。开关 = HS_SOCIAL_QR
+    qr_uri = _qr_data_uri() if cfg.social_qr else ""
+    qr_file = copy_qr_asset(social_dir) if cfg.social_qr else ""
+    result["qr"] = bool(qr_uri)
+
     poster_html = social_dir / "poster.html"
     poster_html.write_text(
-        render_poster_html(board, board_date, width, height, show_parsed, parsed_limit),
+        render_poster_html(
+            board, board_date, width, height, show_parsed, parsed_limit, qr_uri=qr_uri
+        ),
         encoding="utf-8",
     )
     result["poster_html"] = str(poster_html)
@@ -511,7 +620,8 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
             width=width,
             scale=scale,
             page_height=height,
-            anchors=".hero,.item,.parsed,.footer",
+            # .qrbox 也要当锚点：多页切片时整块码不会从中间被切开
+            anchors=".hero,.item,.parsed,.qrbox,.footer",
         )
         if slices:
             result["png"] = str(slices[0])
@@ -558,6 +668,7 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
             cap.caption,
             cap.source,
             cap.recipe,
+            qr_file=qr_file,
         ),
         encoding="utf-8",
     )

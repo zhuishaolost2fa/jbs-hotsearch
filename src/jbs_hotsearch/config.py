@@ -162,6 +162,9 @@ class Config:
     # 是否启用「文案配方 A/B」：从 Supabase caption_recipes 表读配方，按日期哈希轮换。
     # 关掉 = 永远用代码内置那套（等同改造前的行为），出问题时用它一键止血。
     social_caption_recipes: bool = True
+    # 海报底部是否印小程序码（微信扫码进小程序）。码图是打包资产
+    # src/jbs_hotsearch/assets/miniapp_qr.png，换码直接覆盖那个文件。
+    social_qr: bool = True
 
     @property
     def http_timeout(self) -> float:
@@ -219,6 +222,7 @@ class Config:
             social_caption_parsed_ratio=_get_float("HS_SOCIAL_CAPTION_PARSED_RATIO", 0.5),
             social_caption_parsed_max=_get_int("HS_SOCIAL_CAPTION_PARSED_MAX", 2),
             social_caption_recipes=_get_bool("HS_SOCIAL_CAPTION_RECIPES", True),
+            social_qr=_get_bool("HS_SOCIAL_QR", True),
             watch_host=_get("HS_WATCH_HOST", "127.0.0.1"),
             watch_port=_get_int("HS_WATCH_PORT", 8787),
             watch_days=_get_int("HS_WATCH_DAYS", 30),

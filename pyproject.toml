@@ -25,6 +25,11 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# 非代码资产随 wheel 分发：小程序码在 Docker 构建里靠这行进容器
+# （Dockerfile: COPY src + pip install .，没有这行码图会丢，海报退回不带码）
+[tool.setuptools.package-data]
+jbs_hotsearch = ["assets/*.png", "assets/*.jpg"]
+
 # ---------------------------------------------------------------- 静态检查
 [tool.ruff]
 line-length = 100
