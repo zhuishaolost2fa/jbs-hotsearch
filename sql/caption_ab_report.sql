@@ -35,32 +35,49 @@ limit 60;
 -- ------------------------------------------------------------
 -- 3. 效果对比（需要先把互动数据回填进 metrics）
 --
---    回填示例（在小红书发了笔记、拿到数据后）：
+--    ★ 推荐：直接用 watch 大盘的回填页 https://www.jbs-ttj.store/watch/ab/
+--      （basic auth 后，每天一行填 浏览/点赞/转发/收藏/评论，自动写回 metrics）
+--
+--    手工回填（只在页面挂了 / 要批量改的时候用）：
 --
 --    update public.caption_runs
---       set metrics = '{"views":1200,"likes":53,"collects":21,"comments":7}'::jsonb
+--       set metrics = '{"views":1200,"likes":53,"shares":8,"collects":21,"comments":7}'::jsonb
 --     where board_date = '2026-09-20' and kind = 'daily';
 --
---    字段随意扩展，比如加 "note":"9/20 晚上 8 点发的"。
---    没回填的行 metrics is null，下面的查询会自动跳过。
--- ------------------------------------------------------------
+--    key 固定这几个：views / likes / shares / collects / comments，
+--    另加 "note" 记发布时点等备注。字段可留空，没回填的行 metrics is null，下面会自动跳过。
+-- ----------------------------------------------------------------
 select
     coalesce(recipe_id, 'builtin')                              as recipe,
     count(*)                                                    as days,
     round(avg((metrics->>'views')::numeric))                    as avg_views,
     round(avg((metrics->>'likes')::numeric), 1)                 as avg_likes,
+    round(avg((metrics->>'shares')::numeric), 1)                as avg_shares,
     round(avg((metrics->>'collects')::numeric), 1)              as avg_collects,
     round(avg((metrics->>'comments')::numeric), 1)              as avg_comments,
-    -- 收藏率：清单型文案的胜负主要看这个
+    -- 互动率 = 真金白银的反馈（赞+藏+评）占曝光多少：文案本身的说服力主要看这个
+    round(
+        100.0 * (sum((metrics->>'likes')::numeric)
+               + sum((metrics->>'collects')::numeric)
+               + sum((metrics->>'comments')::numeric))
+              / nullif(sum((metrics->>'views')::numeric), 0)
+    , 2)                                                        as engage_rate_pct,
+    -- 收藏率：清单干货型文案的胜负主要看这个
     round(
         100.0 * sum((metrics->>'collects')::numeric)
               / nullif(sum((metrics->>'views')::numeric), 0)
-    , 2)                                                        as collect_rate_pct
+    , 2)                                                        as collect_rate_pct,
+    -- 转发率：转发是唯一能把笔记推出私域的动作，量小但权重高
+    round(
+        100.0 * sum((metrics->>'shares')::numeric)
+              / nullif(sum((metrics->>'views')::numeric), 0)
+    , 2)                                                        as share_rate_pct
 from public.caption_runs
 where kind = 'daily'
   and metrics is not null
+  and source = 'llm'          -- 掉回模板兜底的天（LLM 挂了）不参与对比
 group by 1
-order by collect_rate_pct desc nulls last;
+order by engage_rate_pct desc nulls last;
 
 -- ------------------------------------------------------------
 -- 4. 异常排查：有没有哪天掉回模板兜底（= 那天 LLM 挂了，数据应剔除）

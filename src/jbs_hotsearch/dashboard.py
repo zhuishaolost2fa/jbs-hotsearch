@@ -131,6 +131,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   padding:9px 0;border-bottom:1px solid #f1f2f4}
 .srcrow:last-child{border-bottom:none}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.topnav{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:8px 0 0}
+.topnav a{color:var(--text);text-decoration:none;border:1px solid var(--line);background:#fff;
+  padding:4px 12px;border-radius:999px}
+.topnav a:hover{background:#f3f4f6}
 footer{color:var(--muted);font-size:12px;margin-top:22px;text-align:center}
 @media(max-width:860px){.overview{grid-template-columns:1fr}
   .srcrow{grid-template-columns:110px 1fr 70px}}
@@ -434,6 +438,15 @@ def render(snap: Snapshot, refresh_seconds: int = 60) -> str:
     )
     plan = f'{_esc(hot.plan_at or "—")} 出榜' if hot else ""
 
+    # 用相对路径而不是 /reviews/：大盘可能被挂在任意前缀下（本地 8787、线上 nginx /watch/），
+    # 写绝对路径会被前缀吃掉。
+    topnav = """
+  <nav class="topnav">
+    <a href="reviews/">评论聚合</a>
+    <a href="weekly/">热度周报</a>
+    <a href="ab/">文案 A/B · 回填发布数据</a>
+  </nav>"""
+
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -447,6 +460,7 @@ def render(snap: Snapshot, refresh_seconds: int = 60) -> str:
     <span>更新于 {_esc(_fmt_clock(snap.generated_at, tz))}</span>
     <button onclick="location.reload()">刷新</button>
   </div>
+  {topnav}
 </header>
 {''.join(banners)}
 <div class="overview">{overview}</div>
