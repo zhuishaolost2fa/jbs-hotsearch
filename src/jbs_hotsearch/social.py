@@ -27,6 +27,7 @@ from typing import Any
 from .caption_recipes import gen_daily_caption, log_run
 from .config import Config
 from .models import DailyBoard, RankedScript
+from .shot import screenshot_html as _screenshot_html
 from .shot import screenshot_slices as _screenshot_slices
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,56 @@ def _filtered_chips(filtered: list[RankedScript], limit: int) -> str:
   </section>"""
 
 
+def render_qr_page(
+    qr_uri: str,
+    width: int = 1080,
+    height: int = 1440,
+    board_date: str = "",
+) -> str:
+    """独立 3:4 码页（HS_SOCIAL_QR=tail 时追加在最后一张）。
+
+    为什么单独一张而不是印在榜单图上：小红书对含码图片是按**整篇笔记**判「站外引流」
+    限流，主图干净至少保住封面曝光；这张附图要不要发，由人自己权衡（不发就删掉）。
+
+    这页是给站外 / 私域 / 线下用的（朋友圈、门店物料、私信），所以文案可以直说微信。
+    """
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+html, body {{ width: {width}px; height: {height}px; overflow: hidden; }}
+body {{
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  background: #f5f3ee; color: #211d18;
+}}
+.page {{ width: 100%; height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 0 60px; text-align: center; }}
+.card {{
+  background: #fff; border: 1px solid #ece7dd; border-radius: 28px;
+  padding: 46px 40px 40px; width: 100%;
+}}
+.card img {{ width: 430px; height: 430px; }}
+.card h2 {{ font-size: 44px; font-weight: 800; margin-top: 26px; letter-spacing: 2px; }}
+.card p {{ font-size: 26px; color: #8c8578; margin-top: 12px; line-height: 1.5; }}
+.tail {{ margin-top: 34px; font-size: 22px; color: #a89e8e; }}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="card">
+    <img src="{qr_uri}" alt="小程序码">
+    <h2>微信扫码 · 进小程序</h2>
+    <p>剧本杀热度榜每日更新<br>看完整榜单 · 查剧本详情</p>
+  </div>
+  {('<div class="tail">' + _escape(board_date) + '</div>') if board_date else ""}
+</div>
+</body>
+</html>"""
+
+
 def render_poster_html(
     board: DailyBoard,
     board_date: str,
@@ -165,16 +216,19 @@ def render_poster_html(
     show_parsed: bool = True,
     parsed_limit: int = 6,
     qr_uri: str = "",
+    cta: str = "",
 ) -> str:
     """渲染竖版海报 HTML（body 尺寸随内容变化，一屏即完整海报）。
 
-    qr_uri 传空 = 不渲染小程序码区块（资产缺失 / 用 HS_SOCIAL_QR 关掉）。
+    qr_uri 传空 = 不渲染小程序码区块（默认 off / tail 模式 / 资产缺失）。
+    cta 传空 = 不渲染底部互动钩子。
     """
     items = board.items
     cards = "".join(_poster_item(it) for it in items)
     filtered = board.filtered_items if show_parsed else []
     parsed_block = _filtered_chips(filtered, parsed_limit)
     sub = "米圈杭州拼场 · 近 3 天真实组局"
+    cta_block = f'\n  <div class="cta">{_escape(cta)}</div>' if cta else ""
     qr_block = ""
     if qr_uri:
         qr_block = (
@@ -256,6 +310,12 @@ body {{
 .qrbox img {{ width: 124px; height: 124px; border-radius: 14px; flex: 0 0 auto; }}
 .qrbox .qt b {{ display: block; font-size: 27px; font-weight: 800; letter-spacing: 1px; }}
 .qrbox .qt span {{ display: block; font-size: 19px; color: #8c8578; margin-top: 7px; }}
+
+/* 互动钩子：代替导流的合规手段，用提问把人留在评论区（互动率 = 推荐权重） */
+.cta {{
+  margin-top: 12px; text-align: center; font-size: 25px; font-weight: 600; color: #6b6257;
+  background: #fff; border: 1px dashed #d6cfc3; border-radius: 16px; padding: 15px 18px;
+}}
 </style>
 </head>
 <body>
@@ -266,7 +326,7 @@ body {{
     <div class="sub">{sub}</div>
     <div class="date">{_escape(board_date)}</div>
   </header>
-  <ol class="list">{cards}</ol>{parsed_block}{qr_block}
+  <ol class="list">{cards}</ol>{parsed_block}{qr_block}{cta_block}
   <div class="footer">热度由近 3 天真实组局计算 · 每日更新</div>
 </div>
 </body>
@@ -290,7 +350,10 @@ def _template_caption(board: DailyBoard, caption_parsed: list[RankedScript] | No
     parsed_line = ""
     if caption_parsed:
         names = "、".join(f"《{it.title}》" for it in caption_parsed)
-        parsed_line = f"\n📚 已解析攻略已上线（热度够但未入榜）：{names}，私信获取～"
+        parsed_line = (
+            f"\n📚 已解析攻略已上线（热度够但未入榜）：{names}，"
+            "想看哪本的评论区扣 1，我下一篇就写它～"
+        )
     return _TEMPLATE_CAPTION.format(
         date=board.board_date.isoformat(), top1=top1, summary=summary, parsed_line=parsed_line
     )
@@ -312,6 +375,7 @@ def _render_material_page(
     caption_source: str,
     recipe: object | None = None,
     qr_file: str = "",
+    qr_tail: bool = False,
 ) -> str:
     """素材页：海报切片（两列 + 序号 + 大图预览 + 一键保存）+ 文案 + 本次配方。
 
@@ -364,6 +428,11 @@ def _render_material_page(
             if total > 1
             else "点图片可放大，长按存进相册"
         )
+        if qr_tail:
+            tip += (
+                "。<b style=\"color:#a12a2a\">最后一张是小程序码</b>：小红书机器审核能识别图片里的码，"
+                "命中后按整篇笔记限流 —— 主图已是干净的，怕限流就别发那一张"
+            )
     else:
         shot = ""
         tip = "海报没生成，先复制文案"
@@ -373,8 +442,9 @@ def _render_material_page(
             '<div class="qr-card">'
             f'<img src="{_escape(qr_file)}" alt="小程序码">'
             '<div class="qr-info"><h2>小程序码</h2>'
-            "<p>已印在海报底部。单独发图 / 换封面时用得上：点按钮下载，"
-            "或长按图片保存原图。</p>"
+            "<p>点按钮下载，或长按图片保存原图。</p>"
+            "<p style=\"margin-top:6px\"><b style=\"color:#a12a2a\">别印进小红书主图</b>："
+            "机器审核识别到码会按整篇笔记限流。这张给站外 / 私域 / 线下用。</p>"
             f'<a class="qr-save" href="{_escape(qr_file)}" '
             f'download="{_escape(qr_file)}">⬇️ 保存小程序码</a>'
             "</div></div>"
@@ -594,15 +664,25 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
     parsed_limit = max(1, int(cfg.social_parsed_limit))
     parsed_section = _filtered_chips(board.filtered_items, parsed_limit) if show_parsed else ""
 
-    # 小程序码：海报内嵌 base64 + 素材目录落一份独立文件。开关 = HS_SOCIAL_QR
-    qr_uri = _qr_data_uri() if cfg.social_qr else ""
-    qr_file = copy_qr_asset(social_dir) if cfg.social_qr else ""
+    # 小程序码：off（默认，海报不带码）/ tail（主图干净 + 码单独一张附图）/ all（印在海报底部）
+    # 素材目录那份独立文件三种模式都落 —— 海报不带码 ≠ 不要码，私域/站外照样要用
+    qr_mode = cfg.social_qr
+    qr_uri = _qr_data_uri()
+    qr_file = copy_qr_asset(social_dir)
+    result["qr_mode"] = qr_mode
     result["qr"] = bool(qr_uri)
 
     poster_html = social_dir / "poster.html"
     poster_html.write_text(
         render_poster_html(
-            board, board_date, width, height, show_parsed, parsed_limit, qr_uri=qr_uri
+            board,
+            board_date,
+            width,
+            height,
+            show_parsed,
+            parsed_limit,
+            qr_uri=qr_uri if qr_mode == "all" else "",
+            cta=cfg.social_cta,
         ),
         encoding="utf-8",
     )
@@ -630,6 +710,25 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("海报截图失败（Playwright/浏览器未就绪？）：%s", exc)
         result["png_error"] = str(exc)
+
+    # 2.5) tail 模式：码单独做一张 3:4 附图，追加在切片末尾（主图保持干净）
+    #      —— 是否发布这张由人决定，不发就在素材页里删掉它
+    qr_tail_name = ""
+    if qr_mode == "tail" and qr_uri:
+        qr_page = social_dir / "poster-qr.html"
+        qr_png = social_dir / f"{board_date}-qr.png"
+        try:
+            qr_page.write_text(
+                render_qr_page(qr_uri, width, height, board_date), encoding="utf-8"
+            )
+            if _screenshot_html(qr_page, qr_png, width=width, height=height, scale=scale):
+                qr_tail_name = qr_png.name
+                slices = list(slices or []) + [qr_png]
+                result["png"] = str(slices[0])
+                result["pngs"] = [str(s) for s in slices]
+                result["qr_png"] = str(qr_png)
+        except Exception as exc:  # noqa: BLE001 - 码页失败不该影响主图已出好的产物
+            logger.warning("小程序码页截图失败：%s", exc)
 
     # 3) 文案（按 caption_recipes 配方生成，A/B 轮换）
     cap = _gen_caption(cfg, board)
@@ -669,6 +768,7 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
             cap.source,
             cap.recipe,
             qr_file=qr_file,
+            qr_tail=bool(qr_tail_name),
         ),
         encoding="utf-8",
     )

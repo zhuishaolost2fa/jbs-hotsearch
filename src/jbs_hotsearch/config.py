@@ -54,6 +54,20 @@ def _get_int(key: str, default: int) -> int:
         return default
 
 
+def _get_qr_mode(key: str, default: str = "off") -> str:
+    """海报上的小程序码策略：off（默认，海报不带码）/ tail（码单独一张附图）/ all（印在海报底部）。
+
+    兼容旧的布尔写法：true→all、false→off。**任何无法识别的取值一律退回 off** ——
+    小红书对含码图片是整篇笔记限流，宁可少导流也不能赌。
+    """
+    raw = (_get(key, "") or default).strip().lower()
+    if raw in ("all", "1", "true", "yes", "y", "on"):
+        return "all"
+    if raw in ("tail", "last"):
+        return "tail"
+    return "off"
+
+
 @dataclass
 class Config:
     # ---- 调度 ----
@@ -162,9 +176,17 @@ class Config:
     # 是否启用「文案配方 A/B」：从 Supabase caption_recipes 表读配方，按日期哈希轮换。
     # 关掉 = 永远用代码内置那套（等同改造前的行为），出问题时用它一键止血。
     social_caption_recipes: bool = True
-    # 海报底部是否印小程序码（微信扫码进小程序）。码图是打包资产
-    # src/jbs_hotsearch/assets/miniapp_qr.png，换码直接覆盖那个文件。
-    social_qr: bool = True
+    # 海报上的小程序码策略（小红书机器审核能识别图片里的码，命中后按**整篇笔记**
+    # 判「站外引流」限流，所以默认关）：
+    #   off  = 海报不带码（默认）。素材页仍提供码图，给私域 / 站外 / 线下用
+    #   tail = 主图干净，码单独做成 3:4 附图追加在最后一张（怕限流就别发那张）
+    #   all  = 码印在海报底部横条（限流风险最高，等于拿曝光换转化）
+    # 码图是打包资产 src/jbs_hotsearch/assets/miniapp_qr.png，换码直接覆盖那个文件。
+    social_qr: str = "off"
+    # 海报底部「互动钩子」——替代导流的合规手段：用提问把人留在评论区，
+    # 互动率是推荐权重，等于变相涨曝光。留空 = 不显示这一块。
+    # 例：HS_SOCIAL_CTA="你那边的榜一是谁？评论区聊聊"
+    social_cta: str = ""
 
     @property
     def http_timeout(self) -> float:
@@ -222,7 +244,8 @@ class Config:
             social_caption_parsed_ratio=_get_float("HS_SOCIAL_CAPTION_PARSED_RATIO", 0.5),
             social_caption_parsed_max=_get_int("HS_SOCIAL_CAPTION_PARSED_MAX", 2),
             social_caption_recipes=_get_bool("HS_SOCIAL_CAPTION_RECIPES", True),
-            social_qr=_get_bool("HS_SOCIAL_QR", True),
+            social_qr=_get_qr_mode("HS_SOCIAL_QR"),
+            social_cta=_get("HS_SOCIAL_CTA"),
             watch_host=_get("HS_WATCH_HOST", "127.0.0.1"),
             watch_port=_get_int("HS_WATCH_PORT", 8787),
             watch_days=_get_int("HS_WATCH_DAYS", 30),
