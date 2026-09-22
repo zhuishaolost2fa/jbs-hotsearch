@@ -216,19 +216,16 @@ def render_poster_html(
     show_parsed: bool = True,
     parsed_limit: int = 6,
     qr_uri: str = "",
-    cta: str = "",
 ) -> str:
     """渲染竖版海报 HTML（body 尺寸随内容变化，一屏即完整海报）。
 
     qr_uri 传空 = 不渲染小程序码区块（默认 off / tail 模式 / 资产缺失）。
-    cta 传空 = 不渲染底部互动钩子。
     """
     items = board.items
     cards = "".join(_poster_item(it) for it in items)
     filtered = board.filtered_items if show_parsed else []
     parsed_block = _filtered_chips(filtered, parsed_limit)
     sub = "米圈杭州拼场 · 近 3 天真实组局"
-    cta_block = f'\n  <div class="cta">{_escape(cta)}</div>' if cta else ""
     qr_block = ""
     if qr_uri:
         qr_block = (
@@ -310,12 +307,6 @@ body {{
 .qrbox img {{ width: 124px; height: 124px; border-radius: 14px; flex: 0 0 auto; }}
 .qrbox .qt b {{ display: block; font-size: 27px; font-weight: 800; letter-spacing: 1px; }}
 .qrbox .qt span {{ display: block; font-size: 19px; color: #8c8578; margin-top: 7px; }}
-
-/* 互动钩子：代替导流的合规手段，用提问把人留在评论区（互动率 = 推荐权重） */
-.cta {{
-  margin-top: 12px; text-align: center; font-size: 25px; font-weight: 600; color: #6b6257;
-  background: #fff; border: 1px dashed #d6cfc3; border-radius: 16px; padding: 15px 18px;
-}}
 </style>
 </head>
 <body>
@@ -326,7 +317,7 @@ body {{
     <div class="sub">{sub}</div>
     <div class="date">{_escape(board_date)}</div>
   </header>
-  <ol class="list">{cards}</ol>{parsed_block}{qr_block}{cta_block}
+  <ol class="list">{cards}</ol>{parsed_block}{qr_block}
   <div class="footer">热度由近 3 天真实组局计算 · 每日更新</div>
 </div>
 </body>
@@ -350,9 +341,9 @@ def _template_caption(board: DailyBoard, caption_parsed: list[RankedScript] | No
     parsed_line = ""
     if caption_parsed:
         names = "、".join(f"《{it.title}》" for it in caption_parsed)
+        # 只陈述状态，不做任何请求（「扣1」「码住」「求赞」= 诱导互动，小红书违规）
         parsed_line = (
-            f"\n📚 已解析攻略已上线（热度够但未入榜）：{names}，"
-            "想看哪本的评论区扣 1，我下一篇就写它～"
+            f"\n📚 这几本攻略已整理好，热度够高但本期未入榜：{names}"
         )
     return _TEMPLATE_CAPTION.format(
         date=board.board_date.isoformat(), top1=top1, summary=summary, parsed_line=parsed_line
@@ -682,7 +673,6 @@ def write_social(cfg: Config, board: DailyBoard) -> dict[str, Any]:
             show_parsed,
             parsed_limit,
             qr_uri=qr_uri if qr_mode == "all" else "",
-            cta=cfg.social_cta,
         ),
         encoding="utf-8",
     )

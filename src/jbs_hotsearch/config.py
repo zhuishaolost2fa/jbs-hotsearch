@@ -183,10 +183,8 @@ class Config:
     #   all  = 码印在海报底部横条（限流风险最高，等于拿曝光换转化）
     # 码图是打包资产 src/jbs_hotsearch/assets/miniapp_qr.png，换码直接覆盖那个文件。
     social_qr: str = "off"
-    # 海报底部「互动钩子」——替代导流的合规手段：用提问把人留在评论区，
-    # 互动率是推荐权重，等于变相涨曝光。留空 = 不显示这一块。
-    # 例：HS_SOCIAL_CTA="你那边的榜一是谁？评论区聊聊"
-    social_cta: str = ""
+    # 注：海报上不要加任何「求赞 / 求收藏 / 评论区扣1」之类的引导语 ——
+    # 小红书判定为「诱导互动」违规，与站外导流一样限流。海报只陈述信息。
 
     @property
     def http_timeout(self) -> float:
@@ -245,7 +243,6 @@ class Config:
             social_caption_parsed_max=_get_int("HS_SOCIAL_CAPTION_PARSED_MAX", 2),
             social_caption_recipes=_get_bool("HS_SOCIAL_CAPTION_RECIPES", True),
             social_qr=_get_qr_mode("HS_SOCIAL_QR"),
-            social_cta=_get("HS_SOCIAL_CTA"),
             watch_host=_get("HS_WATCH_HOST", "127.0.0.1"),
             watch_port=_get_int("HS_WATCH_PORT", 8787),
             watch_days=_get_int("HS_WATCH_DAYS", 30),
